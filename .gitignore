@@ -1,0 +1,13 @@
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# BMAD generated render cache
+_bmad/render/*
+!_bmad/render/.gitignore
+
+# BMAD local-only user config
+_bmad/custom/*.user.toml
