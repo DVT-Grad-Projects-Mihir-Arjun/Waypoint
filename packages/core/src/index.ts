@@ -10,3 +10,13 @@ export {
 export type { WaypointConfig } from './config-defaults.js';
 
 export { ensureGitignoreEntry } from './gitignore.js';
+
+export {
+  createPatchSpec,
+  WaypointNotInstalledError,
+  InvalidSpecNameError,
+  SpecNameCollisionError,
+} from './new-spec.js';
+export type { CreatePatchSpecResult } from './new-spec.js';
+
+export { renderPatchSpec } from './templates/patch.js';

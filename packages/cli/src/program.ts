@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { installCommand } from './commands/install.js';
+import { newPatchCommand } from './commands/new-patch.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -24,11 +25,16 @@ export function createProgram(): Command {
       await installCommand();
     });
 
+  program
+    .command('new-patch <name>')
+    .description('Create a new Patch-tier spec (specs/patches/<name>.md, no approval step)')
+    .action(async (name: string) => {
+      await newPatchCommand(name);
+    });
+
   // Stubs only — registered for `--help` discoverability. Command logic
-  // ships in Stories 1.2 (new-patch) and 1.3 (new-feature/new-system); out
-  // of scope here.
+  // ships in Story 1.3 (new-feature/new-system); out of scope here.
   const STUB_COMMANDS: Array<{ use: string; tier: string }> = [
-    { use: 'new-patch <name>', tier: 'Patch' },
     { use: 'new-feature <name>', tier: 'Feature' },
     { use: 'new-system <name>', tier: 'System' },
   ];

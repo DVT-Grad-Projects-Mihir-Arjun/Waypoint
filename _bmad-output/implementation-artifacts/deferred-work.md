@@ -29,3 +29,11 @@ Findings from code review that are real but out of scope for their source story 
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-install-scaffolds-the-repo-structure.md`
   summary: If a transient write failure (e.g. `EACCES`, disk full) occurs partway through the plan-entry write loop in `scaffold()`, already-created paths from that same run are left in place with no rollback — a retry will report them as "kept" rather than the run being fully atomic.
   evidence: Read `scaffold()`'s main loop directly — each entry is written independently with no compensating cleanup on a later entry's failure; the story's "no partial writes" guarantee (I/O matrix, Path collision row) is about pre-flight conflict detection preventing partial writes on a *known* conflict, not about recovering from a mid-write I/O failure, so this is a narrower, lower-probability gap rather than a spec violation.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-patch-tier-spec-creation.md`
+  summary: `createPatchSpec`'s name validation and cross-tier collision check don't account for case-insensitive filesystems (macOS APFS, Windows), so `Fix-Typo` and `fix-typo` are treated as distinct valid names by the regex and collision check even though they resolve to the same file on those platforms.
+  evidence: Confirmed by reading `new-spec.ts`'s `NAME_PATTERN` and the `SPEC_TIERS` collision loop, both of which use plain string equality/regex matching with no case-folding; not something a mechanical patch should decide unilaterally, since fixing it requires a deliberate naming-policy call (reject mixed case? lowercase-normalize names? case-insensitive collision check only?) rather than a one-line code change.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-patch-tier-spec-creation.md`
+  summary: `createPatchSpec`'s name validation regex (`/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/`) accepts Windows-reserved device basenames (`con`, `aux`, `nul`, `com1`, etc.), which would fail unpredictably when writing `specs/patches/<name>.md` on Windows.
+  evidence: Confirmed by reading the regex directly — none of the reserved names are excluded; a real but niche cross-platform gap, and whether to add a reserved-name blocklist is a deliberate scope/policy decision for a future story rather than a mechanical fix to this one.
