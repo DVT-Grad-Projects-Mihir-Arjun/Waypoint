@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Architecture Validation: Waypoint</title>
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --border: #e7e5e4; --text: #1c1917; --muted: #78716c;
+    --verdict-strong: #16a34a; --verdict-adequate: #65a30d; --verdict-thin: #d97706; --verdict-broken: #dc2626;
+    --sev-low: #64748b; --sev-medium: #ca8a04; --sev-high: #ea580c; --sev-critical: #dc2626;
+    --grade-exc: #16a34a; --grade-good: #65a30d; --grade-fair: #d97706; --grade-poor: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; font-size: 15px; }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+  header.report-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .grade { padding: 10px 18px; border-radius: 8px; font-weight: 600; color: white; font-size: 15px; white-space: nowrap; }
+  .grade-excellent { background: var(--grade-exc); } .grade-good { background: var(--grade-good); } .grade-fair { background: var(--grade-fair); } .grade-poor { background: var(--grade-poor); }
+  .synthesis { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--verdict-strong); border-radius: 8px; padding: 18px 22px; margin-bottom: 24px; font-size: 15.5px; }
+  .synthesis p { margin: 0 0 10px; } .synthesis p:last-child { margin-bottom: 0; }
+  .dimension-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 24px; }
+  .dim-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+  .dim-card .dim-count { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  section summary { padding: 14px 20px; cursor: pointer; user-select: none; list-style: none; display: flex; align-items: center; gap: 12px; }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before { content: "▸"; display: inline-block; color: var(--muted); transition: transform 0.15s ease; }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 { display: inline; margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.005em; flex: 1; }
+  .verdict-pill { font-size: 11px; padding: 3px 10px; border-radius: 999px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: white; }
+  .verdict-strong { background: var(--verdict-strong); } .verdict-adequate { background: var(--verdict-adequate); } .verdict-thin { background: var(--verdict-thin); } .verdict-broken { background: var(--verdict-broken); }
+  .dim-body { padding: 4px 20px 18px; } .dim-judgment { color: var(--text); font-size: 14.5px; } .dim-judgment p { margin: 0 0 10px; }
+  .findings-list { padding: 0 20px 4px; }
+  article.finding { padding: 14px 0; border-top: 1px solid var(--border); }
+  article.finding:first-child { border-top: none; }
+  article.finding header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .badge { font-size: 10.5px; padding: 3px 8px; border-radius: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.4; }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+  .reviewer-source { font-size: 12px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .mechanical { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin-top: 24px; font-size: 14px; }
+  .mechanical.good { border-left: 3px solid var(--verdict-strong); }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; } .mechanical li { margin-bottom: 4px; color: var(--text); }
+  footer.report-footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <header class="report-header">
+      <div class="title">
+        <h1>Waypoint — Architecture Validation Report</h1>
+        <div class="subtitle">docs/architecture.md · v0.4 (the redesign) · 4th validation round</div>
+      </div>
+      <div class="grade grade-poor">Poor</div>
+    </header>
+
+    <div class="synthesis">
+      <p><strong>The redesign converged on what it set out to fix.</strong> Both independent reviews confirm, in a dedicated "Closed / well-pinned" section, that every headline problem from rounds 1–3 is now closed <em>by construction, not just by restated intent</em>: the gate-state/CI-write contradiction, the fork-PR token gap, the branch-protection deadlock, the review-dismissal-on-push issue, the local/CI write race, the trailer-grammar and spec-id-encoding gaps, and the undeclared GitHub-specific assumption are all gone because CI is now provably read-only end to end and there's no commit-trailer left to parse.</p>
+      <p>What's left is almost entirely about specifying the <em>replacement</em> mechanism fully — <code>waypoint verify</code>'s "makes its own commit" line hides a bootstrapping deadlock with its own pre-commit gate (found independently by both reviews), an unspecified commit-isolation contract in <code>runCheck()</code>, and shallow-clone/squash-merge SHA resolution. <strong>These are narrow, independently fixable specification gaps in one new mechanism — not a new instance of the structural, comparable-severity-every-round pattern from rounds 1–3.</strong> That pattern is broken.</p>
+    </div>
+
+    <div class="dimension-summary">
+      <div class="dim-card"><div class="dim-name">Rubric walker</div><div class="dim-verdict" style="color: var(--verdict-thin)">thin</div><div class="dim-count">1 critical · 2 high · 2 medium · 1 low</div></div>
+      <div class="dim-card"><div class="dim-name">Adversarial seam-conflict</div><div class="dim-verdict" style="color: var(--verdict-broken)">3 critical, but 5 problem-classes closed</div><div class="dim-count">3 critical · 3 high · 2 medium · 1 low</div></div>
+      <div class="dim-card"><div class="dim-name">Research verification</div><div class="dim-verdict" style="color: var(--verdict-strong)">clean</div><div class="dim-count">0 findings</div></div>
+    </div>
+
+    <div class="mechanical good">
+      <h3>What's now genuinely closed by construction</h3>
+      <ul>
+        <li><strong>Gate-state/CI-write contradiction</strong> (rounds 1–3's headline issue) — fully closed. <code>.gate-state</code> is local-only, gitignored, never expected on a fresh checkout; CI's check doesn't touch it at all.</li>
+        <li><strong>Fork-PR token gap, branch-protection deadlock, review-dismissal-on-push, local/CI write race</strong> — all closed. All four depended on CI needing write/push permissions; CI is now read-only end to end.</li>
+        <li><strong>Trailer-grammar and spec-id-encoding gaps</strong> — closed. No trailer left to parse; <code>verify</code> takes identity as explicit CLI arguments.</li>
+        <li><strong>Undeclared GitHub-specific assumption</strong> — closed. CI needs no elevated permissions and works identically across providers.</li>
+        <li><strong>Async execution ambiguity</strong> — closed. <code>verify</code> is explicitly synchronous, tradeoff justified rather than left implicit.</li>
+      </ul>
+    </div>
+
+    <section class="dimension">
+      <details open>
+        <summary><h2>Critical findings (3 distinct root causes)</h2><span class="verdict-pill verdict-broken">critical</span></summary>
+        <div class="findings-list">
+          <article class="finding">
+            <header><span class="badge badge-sev-critical">critical</span><h3 class="finding-title">waypoint verify's own commit collides with the pre-commit gate it must pass</h3><span class="finding-location">found independently by both reviews</span></header>
+            <div class="finding-note">The default patch-classified globs don't cover <code>tasks/**</code>, so a ledger-only commit is Feature-tier-classified with no spec delta — exactly what gate() blocks. As written, verify likely can't complete its own commit on any Feature/System-tier spec, breaking the mechanism the first time it's used.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add <code>tasks/**</code> to the default patch bucket, or explicitly document that verify's internal commit intentionally skips hooks.</div>
+          </article>
+          <article class="finding">
+            <header><span class="badge badge-sev-critical">critical</span><h3 class="finding-title">runCheck() never specifies how commitSha gets materialized before checkCommand runs</h3></header>
+            <div class="finding-note">Nothing says whether an implementation must isolate/checkout that commit or can run the check in-place. Skipping isolation means CI's per-task loop could end up checking every task against the same current HEAD regardless of what linked_commit says — silently defeating the redesign's central claim.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Pin runCheck() to require an isolated checkout of commitSha, or explicitly scope MVP to same-commit-only checks.</div>
+          </article>
+          <article class="finding">
+            <header><span class="badge badge-sev-critical">critical</span><h3 class="finding-title">Shallow CI clones and squash-merge can make a recorded linked_commit unresolvable</h3></header>
+            <div class="finding-note">Default shallow checkouts mean older SHAs aren't in CI's object database; squash-merge rewrites every feature-branch commit into one new SHA on merge. The document doesn't distinguish "commit not found" from "check genuinely regressed."</div>
+            <div class="finding-fix"><strong>Fix:</strong> State a required CI checkout depth/merge-strategy assumption, or define "commit not resolvable" as a distinct, non-failing outcome.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details open>
+        <summary><h2>High findings (5)</h2><span class="verdict-pill verdict-thin">high</span></summary>
+        <div class="findings-list">
+          <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Self-commit's staging scope is unpinned and collides with a known git gotcha</h3></header><div class="finding-note">Plain `git add &lt;ledger&gt; && git commit` doesn't isolate the commit from other already-staged files.</div><div class="finding-fix"><strong>Fix:</strong> Specify the verify commit must be isolated to the ledger path alone (`git commit --only`).</div></article>
+          <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Re-running waypoint verify on an already-done task is undefined</h3></header><div class="finding-note">v0.3 had an explicit idempotency rule; v0.4 removed the subsystem that rule lived in with no replacement.</div><div class="finding-fix"><strong>Fix:</strong> State whether a re-verify no-ops, errors, or re-verifies-and-overwrites.</div></article>
+          <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Bypass-logging guarantee is conditional on branch-protection/PR infrastructure never stated as a precondition</h3></header><div class="finding-note">A solo developer pushing straight to main (brief.md's own stated primary user) with no PR leaves zero record anywhere if they bypass locally.</div><div class="finding-fix"><strong>Fix:</strong> State the precondition explicitly, or keep a minimal local fallback log for the no-PR case.</div></article>
+          <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">CI's "done-claim correctness" re-check has no bound and no dedup strategy</h3></header><div class="finding-note">Re-running a full check_command once per done task with no caching could mean hundreds of test-suite runs per PR as a repo accumulates tasks.</div><div class="finding-fix"><strong>Fix:</strong> Scope the re-check to specs touched by the PR, and/or dedup by unique linked_commit.</div></article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary><h2>Medium (4) &amp; Low (2)</h2><span class="verdict-pill verdict-adequate">polish</span></summary>
+        <div class="findings-list">
+          <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">No specified failure/rollback contract for verify's commit step</h3></header></article>
+          <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">linked_commit's semantics are looser than FR6/Story 3.2 imply</h3></header><div class="finding-note">It's whatever HEAD is when verify happens to be invoked, not necessarily the commit that implemented that task.</div></article>
+          <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">.gate-state update semantics (merge vs. overwrite) are unpinned</h3></header></article>
+          <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">CI's "every done task" enumeration has no interface contract or dedup</h3></header></article>
+          <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Global check_command lets verify mark a not-actually-tested task done</h3></header><div class="finding-note">Already-accepted MVP tradeoff; worth calling out explicitly.</div></article>
+          <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Push timing for the verify commit is unstated</h3></header></article>
+        </div>
+      </details>
+    </section>
+
+    <footer class="report-footer">
+      <div class="meta"><span>Reviewers: rubric walker, adversarial seam-conflict, research verification</span><span>Generated: 2026-08-20T07:27:21Z</span></div>
+    </footer>
+  </div>
+</body>
+</html>
