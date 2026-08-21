@@ -27,6 +27,8 @@ Existing SDD tools (Kiro, BMAD, Spec-Kit, OpenSpec) each solve part of the "agen
 | 2026-08-20 | 0.4     | Addressed v0.3 quality review: pointed brief's 4th success metric to FR9/FR10 as its real evidence, bounded NFR4's "typical repo" with a concrete file/spec-count baseline, enumerated Story 3.4 AC3's default patch-classified paths, added A4 (git-as-sole-VCS) to Technical Assumptions and the Assumptions Index, committed FR10/Story 4.2 to exactly 4 role prompts | Claude (PM agent) |
 | 2026-08-20 | 0.5     | Reconciled NFR5's Node.js floor to 22+, matching `architecture.md`'s Tech Stack (a cross-document divergence surfaced by the architecture's own v0.3 quality review) | Claude (PM agent) |
 | 2026-08-20 | 0.6     | Added `tasks/**` to Story 3.4 AC3's default patch-classified paths, matching `architecture.md`'s v0.5 fix for a gate/ledger-commit bootstrapping conflict surfaced by the architecture's own quality review | Claude (PM agent) |
+| 2026-08-20 | 0.7     | Addressed a `bmad-review` adversarial finding on `epics.md`: reconciled FR6 and the Ledger glossary entry to say `waypoint verify` instead of "the gate script" (stale pre-v0.4 wording architecture.md's redesign had already superseded), and dropped FR9's "(and optionally CLAUDE.md)" hedge now that CLAUDE.md is explicitly out of scope | Claude (PM agent) |
+| 2026-08-20 | 0.8     | Sprint-planning readiness gate (CONCERNS) flagged that this PRD's own embedded "Epic Details" section had drifted stale relative to `epics.md` (still described "the gate script" setting task completion, and was missing Story 3.5/Story 1.4 entirely) — replaced it with a pointer to `epics.md` as the single authoritative story-level source, keeping only the epic-goal-level Epic List here | Claude (PM agent) |
 
 ## Success Metrics
 
@@ -53,7 +55,7 @@ Carried forward explicitly from `brief.md`'s MVP Scope "Out" list, so this PRD i
 - **Delta**: an ADDED/MODIFIED/REMOVED-tagged edit appended to an existing spec, used instead of a full rewrite.
 - **Tier**: the ceremony level assigned to a change — Patch (no gates), Feature (one approval gate), or System (phased gates).
 - **Gate**: the mechanical check (pre-commit hook or CI script) that verifies spec↔code correspondence and ledger integrity, independent of any LLM's cooperation.
-- **Ledger**: the per-spec YAML file tracking task status, where `done`/`verified_by_gate` can only be set by the gate script, never hand-edited.
+- **Ledger**: the per-spec YAML file tracking task status, where `done`/`verified_by_gate` can only be set by `waypoint verify`, never hand-edited.
 
 ## Requirements
 
@@ -64,10 +66,10 @@ Carried forward explicitly from `brief.md`'s MVP Scope "Out" list, so this PRD i
 - **FR3**: The CLI shall provide `waypoint new-system <name>`, scaffolding a full spec set (PRD-style requirements, architecture doc, ADR stubs, phased task list) requiring approval at each phase boundary.
 - **FR4**: Specs shall support delta-style edits (ADDED / MODIFIED / REMOVED sections) so an existing spec can be updated without a full rewrite.
 - **FR5**: The system shall provide `waypoint check-drift`, comparing the current spec against the actual code and flagging referenced file paths or named symbols (functions/classes referenced by name in the spec) that no longer exist. `[NOTE FOR PM]` **Scope note**: content-level "materially changed" detection (e.g., a referenced function still exists but its behavior/signature has substantially diverged from what the spec describes) is explicitly **deferred to post-MVP** — it requires a defined similarity/change threshold that doesn't yet exist, and shipping it undefined would mean the check either misses real drift or false-positives constantly. MVP ships path/symbol-existence checking only; this FR's wording is narrowed accordingly from the 0.1 draft.
-- **FR6**: The system shall maintain a machine-readable task ledger (YAML/JSON) per Feature/System spec, where each task has a status field settable only by the gate script upon verified completion (e.g., linked commit + passing check), not by free-text agent output.
+- **FR6**: The system shall maintain a machine-readable task ledger (YAML/JSON) per Feature/System spec, where each task has a status field settable only by `waypoint verify` upon verified completion (linked commit + passing check) — an explicit, human/agent-invoked command, not an automatic hook — never by free-text agent output.
 - **FR7**: A gate script (usable as a git pre-commit hook and in CI) shall block a commit/merge if code changed without a corresponding spec delta at Feature tier or above.
 - **FR8**: The system shall provide `waypoint approve <spec-id>`, documented as excluded from the set of actions `AGENTS.md` describes for agent use — so it is not part of any agent's normal task-completion flow by convention — recording approval in the spec's frontmatter. This exclusion is enforced at the documentation layer; it does not technically block an agent with direct CLI/shell access from invoking the command itself (see the enforcement-boundary tension flagged in Background Context).
-- **FR9**: An `AGENTS.md` (and optionally `CLAUDE.md`) file shall be generated at install time, containing tier-selection heuristics, the available CLI commands, and role-prompt locations, in plain markdown any agent can read. _(Narrowed from the 0.1 draft: this FR is a claim about the artifact's contents, not a claim about downstream agent behavior — whether an agent actually follows it is a property of that agent, not something Waypoint can guarantee or test for. See Story 4.1's note on optional behavioral verification.)_
+- **FR9**: An `AGENTS.md` file shall be generated at install time, containing tier-selection heuristics, the available CLI commands, and role-prompt locations, in plain markdown any agent can read. `CLAUDE.md` generation is explicitly out of scope for MVP. _(Narrowed from the 0.1 draft: this FR is a claim about the artifact's contents, not a claim about downstream agent behavior — whether an agent actually follows it is a property of that agent, not something Waypoint can guarantee or test for. See Story 4.1's note on optional behavioral verification.)_
 - **FR10**: The system shall define 4 role prompts (Planner, Architect, Implementer, Reviewer) as plain markdown files any agent can be pointed to, rather than requiring a bespoke multi-agent runtime.
 - **FR11**: The CLI shall provide `waypoint status`, showing open specs, their tier, approval state, and task completion state across the repo.
 - **FR12**: The gate script shall classify a changed file's tier using a config-driven mechanism: path patterns declared in `.waypoint/config.yaml` map file globs to a default tier (e.g., `specs/patches/**` and other user-declared patch-classified paths are unenforced; everything else defaults to Feature-tier enforcement). If a changed path matches no declared pattern, the gate **fails closed** — it is treated as Feature-tier and enforcement applies, per `architecture.md`'s Error Handling Strategy. This FR defines the mechanism that `architecture.md` assumes but the 0.1 draft never specified.
@@ -109,77 +111,4 @@ _None of these were explicitly user-confirmed in the planning session — flag a
 
 ## Epic Details
 
-### Epic 1 — Core CLI & Tiering
-
-**Story 1.1**: As a developer, I want `waypoint install` to scaffold `/specs`, `/tasks`, `/decisions`, and config files in my repo, so I have the base structure without manual setup.
-
-- AC1: Running install in an empty repo creates all four top-level items with no errors.
-- AC2: Running install in a repo that already has a `/specs` folder does not overwrite existing content.
-
-**Story 1.2**: As a developer, I want `waypoint new-patch <name>` to create a minimal spec file with no approval requirement, so trivial changes stay fast.
-
-- AC1: Command creates a single markdown file under `/specs/patches/` from a lightweight template.
-- AC2: No task-ledger or approval fields are required for this tier.
-
-**Story 1.3**: As a developer, I want `waypoint new-feature <name>` and `waypoint new-system <name>` to scaffold their respective templates with the right sections pre-filled.
-
-- AC1: Feature template includes requirements, design, and a task list section.
-- AC2: System template includes PRD-style requirements, architecture stub, ADR stubs, and phased tasks.
-
-### Epic 2 — Delta Spec Format & Drift Detection
-
-**Story 2.1**: As a developer, I want to update an existing spec using ADDED/MODIFIED/REMOVED sections, so I don't have to rewrite the whole document for a small change.
-
-- AC1: CLI provides a way to append a dated delta block to an existing spec file.
-- AC2: Delta blocks are visually distinct in the rendered markdown (e.g., a heading + tag).
-
-**Story 2.2**: As a developer, I want `waypoint check-drift` to flag specs referencing code paths or named symbols that no longer exist, so stale specs get caught before they mislead an agent.
-
-- AC1: Command scans spec content for referenced file paths and checks they still exist in the repo.
-- AC2: Command scans spec content for named function/class symbols and checks they still resolve in the repo (e.g., via a simple grep/AST-lite lookup, not semantic analysis).
-- AC3: Command exits non-zero if drift is found, suitable for CI use.
-- _Out of scope for this story (see FR5 scope note): detecting that an existing, still-present symbol's behavior has "materially changed" — no threshold is defined for MVP._
-
-### Epic 3 — Mechanical Gate Enforcement
-
-**Story 3.1**: As a developer, I want a pre-commit hook that blocks commits changing code without a corresponding spec delta (Feature tier+), so enforcement doesn't depend on remembering to update the spec.
-
-- AC1: Hook correctly identifies Feature/System-tier code paths vs. Patch-tier (unenforced) paths.
-- AC2: Hook can be bypassed only with an explicit `--no-verify`-equivalent flag that is logged, not silent.
-
-**Story 3.2**: As a developer, I want a task ledger where a task's `done` status can only be set by the gate script after verifying a linked commit and passing check, so an agent can't mark its own work complete without verification.
-
-- AC1: Attempting to hand-edit the ledger's status field is detected and flagged by the gate script.
-- AC2: Gate script correctly transitions a task to `done` when its linked commit passes the specified check (e.g., test command exits 0).
-
-**Story 3.3**: As a developer, I want `waypoint approve <spec-id>` restricted to a human-run command outside the agent's normal task loop, so approval gates can't be self-granted.
-
-- AC1: Approval command is not exposed in the set of actions described to agents in `AGENTS.md` for autonomous use.
-- AC2: Approval is recorded with a timestamp and (optionally) a name/identity field.
-- _Note: AC1 verifies a documentation-layer exclusion only — it does not test whether an agent with direct CLI/shell access could still invoke `approve`. See Background Context's `[NOTE FOR PM]` on this enforcement boundary._
-
-**Story 3.4**: As a developer, I want the gate to classify a changed file's tier from config-declared path patterns, and to default to Feature-tier enforcement when no pattern matches, so ambiguous changes never slip through unenforced by accident.
-
-- AC1: `.waypoint/config.yaml` supports a list of glob patterns mapped to `patch` (unenforced) tier; anything not matched defaults to `feature` classification.
-- AC2: A changed path matching no declared pattern causes the gate to apply Feature-tier checks (fail closed), and this is logged clearly (not a silent pass-through).
-- AC3: Default config generated by `waypoint install` pre-populates the following as patch-classified: `specs/patches/**`, `docs/**`, root-level `*.md` files, and `tasks/**` (the task ledger directory) — so a fresh install doesn't over-enforce out of the box, and the ledger's own machine-verification commits (per FR6) are never blocked by the gate they must pass.
-
-### Epic 4 — Agent Integration Layer
-
-**Story 4.1**: As a developer, I want an `AGENTS.md` generated at install time explaining tier rules and available commands, so any agent I point at the repo has what it needs to select the correct process.
-
-- AC1: File contains a section each for tier-selection heuristics, the available CLI commands, and role-prompt locations.
-- AC2: File is plain markdown with no tool-specific syntax, so it's readable by Claude Code, Cursor, or a human.
-- _Note: these ACs test the artifact's contents only. Whether an agent actually follows the file is a property of that agent, not testable by this story. If behavioral verification matters later, a post-MVP addition would be a scripted scenario test that runs a real agent against a seeded repo and checks its tier choice — not part of MVP scope._
-
-**Story 4.2**: As a developer, I want 4 role-prompt files (Planner, Architect, Implementer, Reviewer) I can point any agent at, so I get role separation without a bespoke multi-agent runtime.
-
-- AC1: Each role prompt is a standalone markdown file usable as a system prompt or slash-command body.
-- AC2: Role prompts reference the tier templates and gate commands so behavior stays consistent across roles.
-
-### Epic 5 — Status & Reporting
-
-**Story 5.1**: As a developer, I want `waypoint status` to show all open specs, their tier, approval state, and task completion, so I have one place to check where everything stands.
-
-- AC1: Output is readable in a terminal (table or list format) and includes counts by tier.
-- AC2: Command flags any Feature/System spec with unapproved status alongside in-progress tasks.
+The detailed, authoritative story-level breakdown (acceptance criteria, technical mechanism, and cross-references to `architecture.md`) lives in `_bmad-output/planning-artifacts/epics.md`, produced via `bmad-create-epics-and-stories` and hardened through a full `bmad-review` pass (adversarial + edge-case-hunter + editorial lenses). This PRD intentionally does not duplicate that content — an earlier draft of this section did, and it drifted stale relative to the architecture redesign (e.g., it still described "the gate script" setting task completion, superseded by `waypoint verify`) before being replaced with this pointer. The Epic List above remains accurate at the epic-goal level; for stories and ACs, see `epics.md`.

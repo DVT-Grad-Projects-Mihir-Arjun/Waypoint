@@ -1,0 +1,17 @@
+{
+  "name": "@waypoint/core",
+  "version": "0.1.0",
+  "description": "Waypoint core: scaffolding, gate, drift, ledger, and delta logic shared by the CLI, git hook, and CI.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1"
+  }
+}

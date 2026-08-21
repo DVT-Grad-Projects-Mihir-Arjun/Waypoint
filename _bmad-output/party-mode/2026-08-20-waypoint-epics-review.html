@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Waypoint Epics Review — 2026-08-20</title>
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --border: #e7e5e4; --text: #1c1917; --muted: #78716c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.65; font-size: 15.5px;
+  }
+  .container { max-width: 720px; margin: 0 auto; padding: 48px 24px 72px; }
+  header { text-align: center; margin-bottom: 40px; }
+  header h1 { font-size: 22px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 13.5px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .roster { display: flex; justify-content: center; gap: 14px; margin: 28px 0 40px; flex-wrap: wrap; }
+  .chip { display: flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; font-size: 13px; }
+  .chip .icon { font-size: 15px; }
+  .turn { display: flex; gap: 14px; margin-bottom: 20px; align-items: flex-start; }
+  .turn .avatar { font-size: 22px; flex-shrink: 0; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; background: var(--surface); border: 1px solid var(--border); border-radius: 50%; }
+  .turn .bubble { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; flex: 1; }
+  .turn .name { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+  .turn .name .title { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .turn .text { font-size: 14.5px; }
+  .turn .text code { background: rgba(0,0,0,0.05); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .fixes { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; margin-top: 36px; }
+  .fixes h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 12px; }
+  .fixes ul { margin: 0; padding-left: 20px; }
+  .fixes li { margin-bottom: 8px; }
+  footer { text-align: center; margin-top: 40px; color: var(--muted); font-size: 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Waypoint Epics Review</h1>
+    <div class="sub">bmad-party-mode · 2026-08-20</div>
+  </header>
+
+  <div class="roster">
+    <div class="chip"><span class="icon">📊</span> Mary — Analyst</div>
+    <div class="chip"><span class="icon">📋</span> John — PM</div>
+    <div class="chip"><span class="icon">🎨</span> Sally — UX</div>
+    <div class="chip"><span class="icon">🏗️</span> Winston — Architect</div>
+    <div class="chip"><span class="icon">💻</span> Amelia — Dev</div>
+  </div>
+
+  <div class="turn">
+    <div class="avatar">📋</div>
+    <div class="bubble">
+      <div class="name">John <span class="title">Product Manager</span></div>
+      <div class="text">Alright, walk me through it. Twelve stories, five epics — Amelia, you're building this. Does Epic 3 actually hang together, or does it just look tidy on paper?</div>
+    </div>
+  </div>
+
+  <div class="turn">
+    <div class="avatar">💻</div>
+    <div class="bubble">
+      <div class="name">Amelia <span class="title">Senior Software Engineer</span></div>
+      <div class="text">Story 3.3's fine. Story 3.5 is the one I'd push back on — nowhere does it say <em>how</em> CI enumerates which tasks to check. The architecture doc pins that. If I'm handed just this AC, I'm inventing the mechanism myself.</div>
+    </div>
+  </div>
+
+  <div class="turn">
+    <div class="avatar">📊</div>
+    <div class="bubble">
+      <div class="name">Mary <span class="title">Business Analyst</span></div>
+      <div class="text">Can I flag something upstream? Story 3.3's five ACs are all mechanism. Not one tests the actual FR6 promise — an agent can't self-report completion. That's detection <em>after</em> the fact, not the adversarial path Epic 3's own goal statement promises.</div>
+    </div>
+  </div>
+
+  <div class="turn">
+    <div class="avatar">🏗️</div>
+    <div class="bubble">
+      <div class="name">Winston <span class="title">System Architect</span></div>
+      <div class="text">One more, similar shape. Story 3.4 is honest that <code>approve</code>'s exclusion is a convention — but that exclusion only actually exists once Epic 4 ships <code>AGENTS.md</code>. Between the two, <code>approve</code> is unprotected. Known, but not called out anywhere as a risk.</div>
+    </div>
+  </div>
+
+  <div class="turn">
+    <div class="avatar">🎨</div>
+    <div class="bubble">
+      <div class="name">Sally <span class="title">UX Designer</span></div>
+      <div class="text">Speaking as the one person here without a UI to design — Story 1.1's third AC has architecture rationale riding inside an "And" clause. A dev agent testing this doesn't care <em>why</em>; that's narrative, not a test.</div>
+    </div>
+  </div>
+
+  <div class="fixes">
+    <h2>Fixes landed</h2>
+    <ul>
+      <li><strong>Story 3.5</strong> now names its own enumeration mechanism (<code>tasks/**/*.ledger.yaml</code>) instead of assuming the dev agent cross-references the architecture doc.</li>
+      <li><strong>Story 3.5</strong> gained an explicit adversarial AC proving FR6's actual "can't self-report completion" guarantee — a fabricated <code>linked_commit</code> with no local verification history fails CI, by name.</li>
+      <li><strong>Story 3.4</strong> now names its own interim gap: <code>approve</code> is unprotected between finishing Epic 3 and shipping Epic 4's <code>AGENTS.md</code> — called out, not silently implied.</li>
+      <li><strong>Story 1.1 AC3</strong> is now purely testable; the architectural rationale moved to prose below it.</li>
+    </ul>
+  </div>
+
+  <footer>Waypoint · epics.md · Epic 3 review session</footer>
+</div>
+</body>
+</html>
