@@ -475,3 +475,32 @@ describe('createFeatureSpec — invalid name', () => {
     );
   });
 });
+
+describe('path-separator sensitivity (NFR5 cross-platform verification)', () => {
+  // The happy-path tests above already assert `result.path`/`result.ledgerPath`
+  // equal `path.join(...)`-built expectations, but only implicitly, as one
+  // assertion among several. This test exists solely to name that pattern
+  // explicitly as this story's path-separator-sensitivity check: on Windows,
+  // a path built by naive string concatenation (`${cwd}/specs/...`) would
+  // diverge from one built by `path.join` (which uses `\`), so asserting
+  // exact `path.join(...)` equality — rather than e.g. a substring or
+  // POSIX-style check — is what actually exercises path-separator handling
+  // across `ubuntu-latest`/`macos-latest`/`windows-latest`.
+  beforeEach(async () => {
+    await scaffold(tmpDir);
+  });
+
+  it("createPatchSpec's returned path equals a path.join(...)-built expectation exactly", async () => {
+    const result = await createPatchSpec(tmpDir, 'separator-check');
+    const expected = path.join(tmpDir, 'specs', 'patches', 'separator-check.md');
+    expect(result.path).toBe(expected);
+  });
+
+  it("createFeatureSpec's returned path and ledgerPath equal path.join(...)-built expectations exactly", async () => {
+    const result = await createFeatureSpec(tmpDir, 'separator-check');
+    const expectedSpecPath = path.join(tmpDir, 'specs', 'features', 'separator-check.md');
+    const expectedLedgerPath = path.join(tmpDir, 'tasks', `${result.id}.ledger.yaml`);
+    expect(result.path).toBe(expectedSpecPath);
+    expect(result.ledgerPath).toBe(expectedLedgerPath);
+  });
+});
