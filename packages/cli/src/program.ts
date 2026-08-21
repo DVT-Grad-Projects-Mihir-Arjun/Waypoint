@@ -4,6 +4,7 @@ import { newPatchCommand } from './commands/new-patch.js';
 import { newFeatureCommand } from './commands/new-feature.js';
 import { newSystemCommand } from './commands/new-system.js';
 import { updateCommand } from './commands/update.js';
+import { checkDriftCommand } from './commands/check-drift.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -60,6 +61,15 @@ export function createProgram(): Command {
     )
     .action(async (specId: string) => {
       await updateCommand(specId);
+    });
+
+  program
+    .command('check-drift')
+    .description(
+      'Scan every approved/in-progress spec for backtick-delimited path/symbol references that no longer resolve; exits non-zero if any are found'
+    )
+    .action(async () => {
+      await checkDriftCommand();
     });
 
   return program;

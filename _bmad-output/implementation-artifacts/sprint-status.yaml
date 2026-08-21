@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-20-2026 13:35
-last_updated: 08-21-2026 13:25
+last_updated: 08-21-2026 14:26
 project: Alt-Methodology
 project_key: NOKEY
 tracking_system: file-system
@@ -44,7 +44,7 @@ development_status:
 
   epic-2: in-progress
   2-1-update-spec-via-delta: review
-  2-2-check-drift-detects-stale-specs: backlog
+  2-2-check-drift-detects-stale-specs: review
   epic-2-retrospective: optional
 
   epic-3: backlog

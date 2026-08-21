@@ -49,3 +49,6 @@ export {
   LedgerNotFoundError,
 } from './update-spec.js';
 export type { UpdateSpecResult } from './update-spec.js';
+
+export { checkDrift } from './check-drift.js';
+export type { DriftFinding, CheckDriftResult } from './check-drift.js';
