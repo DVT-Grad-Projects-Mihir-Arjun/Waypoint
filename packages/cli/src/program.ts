@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { installCommand } from './commands/install.js';
 import { newPatchCommand } from './commands/new-patch.js';
 import { newFeatureCommand } from './commands/new-feature.js';
+import { newSystemCommand } from './commands/new-system.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -42,22 +43,14 @@ export function createProgram(): Command {
       await newFeatureCommand(name);
     });
 
-  // Stub only — registered for `--help` discoverability. `new-system` is a
-  // materially different multi-file spec-set, deferred to its own spec (see
-  // deferred-work.md); out of scope for Story 1.3.
-  const STUB_COMMANDS: Array<{ use: string; tier: string }> = [
-    { use: 'new-system <name>', tier: 'System' },
-  ];
-
-  for (const { use, tier } of STUB_COMMANDS) {
-    program
-      .command(use)
-      .description(`Create a new ${tier}-tier spec (not yet implemented)`)
-      .action(() => {
-        console.error(`'${use.split(' ')[0]}' is not implemented yet.`);
-        process.exitCode = 1;
-      });
-  }
+  program
+    .command('new-system <name>')
+    .description(
+      'Create a new System-tier spec (specs/systems/<name>/{prd.md,architecture.md,adr.md} + tasks/<id>.ledger.yaml, phased approval)'
+    )
+    .action(async (name: string) => {
+      await newSystemCommand(name);
+    });
 
   return program;
 }

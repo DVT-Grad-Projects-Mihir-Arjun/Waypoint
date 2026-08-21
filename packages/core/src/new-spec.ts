@@ -4,6 +4,14 @@ import path from 'node:path';
 import { renderPatchSpec } from './templates/patch.js';
 import { PLACEHOLDER_TASK_DESCRIPTION, renderFeatureSpec } from './templates/feature.js';
 import { renderFeatureLedgerYaml } from './templates/feature-ledger.js';
+import {
+  PLACEHOLDER_PHASE_1_TASK_DESCRIPTION,
+  PLACEHOLDER_PHASE_2_TASK_DESCRIPTION,
+  renderSystemAdrStub,
+  renderSystemArchitectureStub,
+  renderSystemPrd,
+} from './templates/system.js';
+import { renderSystemLedgerYaml } from './templates/system-ledger.js';
 
 /**
  * Thrown when `.waypoint/config.yaml` doesn't exist (or isn't a regular
@@ -49,8 +57,10 @@ export class InvalidSpecNameError extends Error {
 
 /**
  * Thrown when `<name>` already exists as a spec at any tier
- * (`specs/patches/<name>.md`, `specs/features/<name>.md`,
- * `specs/systems/<name>.md`). Nothing is overwritten.
+ * (`specs/patches/<name>.md`, `specs/features/<name>.md`, or
+ * `specs/systems/<name>` — the latter checked as a directory-or-file, since
+ * System's own output is a spec-set directory, not a single `<name>.md`
+ * file). Nothing is overwritten.
  */
 export class SpecNameCollisionError extends Error {
   readonly collidingPath: string;
@@ -105,6 +115,22 @@ export interface CreateFeatureSpecResult {
   id: string;
 }
 
+/** Result of a successful `createSystemSpec()` call. */
+export interface CreateSystemSpecResult {
+  /** Absolute path to the newly-written `specs/systems/<name>/` directory. */
+  specDir: string;
+  /** Absolute path to the newly-written `prd.md` inside `specDir`. */
+  prdPath: string;
+  /** Absolute path to the newly-written `architecture.md` inside `specDir`. */
+  architecturePath: string;
+  /** Absolute path to the newly-written `adr.md` inside `specDir`. */
+  adrPath: string;
+  /** Absolute path to the newly-written matching task ledger file. */
+  ledgerPath: string;
+  /** The spec's frontmatter `id` (`system-<date>-<name>`), also the ledger's `spec_id`. */
+  id: string;
+}
+
 // Matches the Design Notes regex exactly: rejects empty, path separators,
 // '..', dotfiles, and anything else likely to escape `specs/patches/`.
 const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
@@ -137,6 +163,26 @@ function todayIsoDate(): string {
 }
 
 const SPEC_TIERS = ['patches', 'features', 'systems'] as const;
+type SpecTier = (typeof SPEC_TIERS)[number];
+
+/**
+ * The filesystem path checked for a name collision at a given tier —
+ * tier-shape-aware, since System's own output is a spec-set directory, not
+ * a single file:
+ * - `patches`/`features`: `specs/<tier>/<name>.md`, a file (unchanged
+ *   behavior from before this helper existed).
+ * - `systems`: `specs/systems/<name>`, no extension, checked as a
+ *   directory-or-file — whatever already sits at that path (a leftover
+ *   plain file included) counts as a collision.
+ *
+ * Shared by `createPatchSpec`/`createFeatureSpec`/`createSystemSpec` so all
+ * three tiers detect a cross-tier collision against `systems` the same way.
+ */
+function specTierCollisionPath(cwd: string, tier: SpecTier, name: string): string {
+  return tier === 'systems'
+    ? path.join(cwd, 'specs', tier, name)
+    : path.join(cwd, 'specs', tier, `${name}.md`);
+}
 
 /**
  * True only if `.waypoint/config.yaml` exists and is a regular file. Any
@@ -170,6 +216,19 @@ async function rollbackSpecFile(targetPath: string): Promise<void> {
 }
 
 /**
+ * Best-effort rollback of a just-written `specs/systems/<name>/` directory
+ * (and everything already written inside it) when a later write in the same
+ * `createSystemSpec()` call fails, for any reason. Same best-effort,
+ * swallow-your-own-failure pattern as `rollbackSpecFile()` above — a
+ * rollback error must never mask the error that triggered it.
+ */
+async function rollbackSpecDir(specDir: string): Promise<void> {
+  await rm(specDir, { recursive: true, force: true }).catch(() => {
+    // Best-effort: see rollbackSpecFile()'s comment above.
+  });
+}
+
+/**
  * Creates a patch-tier spec at `specs/patches/<name>.md` in `cwd`.
  *
  * Order of checks (each must fully precede the next, per the story's
@@ -199,7 +258,7 @@ export async function createPatchSpec(
   }
 
   for (const tier of SPEC_TIERS) {
-    const candidate = path.join(cwd, 'specs', tier, `${name}.md`);
+    const candidate = specTierCollisionPath(cwd, tier, name);
     if (existsSync(candidate)) {
       throw new SpecNameCollisionError(candidate);
     }
@@ -263,7 +322,7 @@ export async function createFeatureSpec(
   }
 
   for (const tier of SPEC_TIERS) {
-    const candidate = path.join(cwd, 'specs', tier, `${name}.md`);
+    const candidate = specTierCollisionPath(cwd, tier, name);
     if (existsSync(candidate)) {
       throw new SpecNameCollisionError(candidate);
     }
@@ -318,4 +377,138 @@ export async function createFeatureSpec(
   }
 
   return { path: targetPath, ledgerPath, id };
+}
+
+/**
+ * Creates a system-tier spec-set at `specs/systems/<name>/` (`prd.md`,
+ * `architecture.md`, `adr.md` — matching docs/architecture.md's own
+ * `templates/system/` source-tree listing exactly), plus a matching phased
+ * task ledger at `tasks/<id>.ledger.yaml` (`id` = `system-<date>-<name>`), in
+ * `cwd`.
+ *
+ * Order of checks (each must fully precede the next, per the story's
+ * Boundaries & Constraints):
+ * 1. Validate `<name>` — before any filesystem check or write.
+ * 2. Confirm the repo is installed (`.waypoint/config.yaml` exists).
+ * 3. Confirm `<name>` doesn't collide with an existing spec at any tier
+ *    (via `specTierCollisionPath`, tier-shape-aware for `systems`).
+ * 4. Confirm `<id>`'s ledger path doesn't already collide.
+ * 5. Write all four files: `specs/systems/<name>/{prd.md,architecture.md,adr.md}`
+ *    and `tasks/<id>.ledger.yaml`.
+ *
+ * System tier has the same single `approved_by`/`approved_at: null` pair as
+ * Feature tier (nothing has been approved yet regardless of tier) plus two
+ * phase sections, each with exactly one placeholder task/ledger-row pair —
+ * the actual per-phase `waypoint approve` mechanism is Epic 3's scope, out
+ * of bounds here.
+ *
+ * No partial writes survive any failure: if any of the four writes fails
+ * after an earlier one already succeeded, the whole `specs/systems/<name>/`
+ * directory (and the ledger file, if that step was reached) is rolled back
+ * before this rejects — the same "neither/none written" contract
+ * `createFeatureSpec` already guarantees for its two files.
+ */
+export async function createSystemSpec(
+  cwd: string,
+  name: string
+): Promise<CreateSystemSpecResult> {
+  if (!isValidName(name)) {
+    throw new InvalidSpecNameError(name);
+  }
+
+  // Same "directory at the config path (or any other statSync failure)
+  // counts as not installed" rule as createPatchSpec/createFeatureSpec.
+  if (!isInstalled(cwd)) {
+    throw new WaypointNotInstalledError();
+  }
+
+  for (const tier of SPEC_TIERS) {
+    const candidate = specTierCollisionPath(cwd, tier, name);
+    if (existsSync(candidate)) {
+      throw new SpecNameCollisionError(candidate);
+    }
+  }
+
+  // `id` must be computed before the ledger-path collision check (and
+  // reused, not recomputed, for the actual write below) since the ledger
+  // filename is keyed by the full `id`, not the bare `<name>`.
+  const createdAt = todayIsoDate();
+  const id = `system-${createdAt}-${name}`;
+  const ledgerPath = path.join(cwd, 'tasks', `${id}.ledger.yaml`);
+  if (existsSync(ledgerPath)) {
+    throw new LedgerNameCollisionError(ledgerPath);
+  }
+
+  const specDir = path.join(cwd, 'specs', 'systems', name);
+  const prdPath = path.join(specDir, 'prd.md');
+  const architecturePath = path.join(specDir, 'architecture.md');
+  const adrPath = path.join(specDir, 'adr.md');
+
+  const prdContent = renderSystemPrd(name, createdAt);
+  const architectureContent = renderSystemArchitectureStub();
+  const adrContent = renderSystemAdrStub();
+  const ledgerContent = renderSystemLedgerYaml(
+    id,
+    PLACEHOLDER_PHASE_1_TASK_DESCRIPTION,
+    PLACEHOLDER_PHASE_2_TASK_DESCRIPTION
+  );
+
+  await mkdir(specDir, { recursive: true });
+
+  try {
+    // Exclusive create ('wx') on the first file written into the new
+    // directory: if another concurrent `new-system` call won the race
+    // between the collision check above and this write (e.g. it also
+    // reached `mkdir(specDir, ...)` first, which `recursive: true` lets
+    // both callers succeed at), fail clearly instead of silently mixing
+    // this call's files into that call's directory.
+    await writeFile(prdPath, prdContent, { encoding: 'utf8', flag: 'wx' });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      // Someone else — a concurrent `new-system` call that won the TOCTOU
+      // race, most likely — already owns `specDir`: it (or its own
+      // in-progress files) must not be deleted out from under it, so no
+      // rollback here, only the collision error.
+      throw new SpecNameCollisionError(specDir);
+    }
+    // Any other failure (EACCES, disk full, ...) means `mkdir(specDir, ...)`
+    // above already created the (possibly empty) directory before this
+    // write was attempted, and nothing else could have raced in to claim
+    // it (that case is EEXIST, handled above) — so it's this call's own,
+    // and must not survive as an orphan: the collision check above treats
+    // any existing path at `specs/systems/<name>` as a collision, so
+    // leaving it behind would make every future retry of this name fail
+    // forever with no repair path.
+    await rollbackSpecDir(specDir);
+    throw err;
+  }
+
+  try {
+    // `prd.md` above already exclusively claimed `specDir` for this call, so
+    // `architecture.md`/`adr.md` are also written exclusively ('wx'): if
+    // either path somehow already has content (a TOCTOU race, or leftover
+    // state from an interrupted prior attempt), fail clearly and roll back
+    // rather than silently overwriting it.
+    await writeFile(architecturePath, architectureContent, { encoding: 'utf8', flag: 'wx' });
+    await writeFile(adrPath, adrContent, { encoding: 'utf8', flag: 'wx' });
+  } catch (err) {
+    await rollbackSpecDir(specDir);
+    throw err;
+  }
+
+  try {
+    // Same "the spec-set has already succeeded by this point, so a failure
+    // here must roll it all back" reasoning as createFeatureSpec's own
+    // ledger-write step.
+    await mkdir(path.dirname(ledgerPath), { recursive: true });
+    await writeFile(ledgerPath, ledgerContent, { encoding: 'utf8', flag: 'wx' });
+  } catch (err) {
+    await rollbackSpecDir(specDir);
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new LedgerNameCollisionError(ledgerPath);
+    }
+    throw err;
+  }
+
+  return { specDir, prdPath, architecturePath, adrPath, ledgerPath, id };
 }
