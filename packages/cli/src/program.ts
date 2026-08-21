@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { installCommand } from './commands/install.js';
 import { newPatchCommand } from './commands/new-patch.js';
+import { newFeatureCommand } from './commands/new-feature.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -32,10 +33,19 @@ export function createProgram(): Command {
       await newPatchCommand(name);
     });
 
-  // Stubs only — registered for `--help` discoverability. Command logic
-  // ships in Story 1.3 (new-feature/new-system); out of scope here.
+  program
+    .command('new-feature <name>')
+    .description(
+      'Create a new Feature-tier spec (specs/features/<name>.md + tasks/<name>.ledger.yaml, one approval gate)'
+    )
+    .action(async (name: string) => {
+      await newFeatureCommand(name);
+    });
+
+  // Stub only — registered for `--help` discoverability. `new-system` is a
+  // materially different multi-file spec-set, deferred to its own spec (see
+  // deferred-work.md); out of scope for Story 1.3.
   const STUB_COMMANDS: Array<{ use: string; tier: string }> = [
-    { use: 'new-feature <name>', tier: 'Feature' },
     { use: 'new-system <name>', tier: 'System' },
   ];
 

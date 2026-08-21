@@ -150,6 +150,8 @@ So that trivial changes stay fast.
 
 ### Story 1.3: Feature and System-tier spec scaffolding
 
+> **Build note (2026-08-21):** During implementation this story was split in two — `new-feature` was built first as `spec-1-3-feature-tier-spec-creation.md`; `new-system` (the multi-file PRD/architecture/ADR spec-set below) was deferred to its own future spec (see `deferred-work.md`) since it's a materially different, independently shippable deliverable. The acceptance criteria below still describe the full original scope.
+
 As a developer,
 I want `waypoint new-feature <name>` and `waypoint new-system <name>` to scaffold their respective templates with the right sections pre-filled,
 So that I get the right ceremony level for bigger changes.
