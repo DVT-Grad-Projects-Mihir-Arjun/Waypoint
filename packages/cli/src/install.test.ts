@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installCommand } from './commands/install.js';
 import { newFeatureCommand } from './commands/new-feature.js';
 import { newPatchCommand } from './commands/new-patch.js';
+import { newSystemCommand } from './commands/new-system.js';
 import { createProgram } from './program.js';
 
 // Mirrors @waypoint/core's own (unexported) `todayIsoDate()` — needed here
@@ -56,22 +57,6 @@ describe('installCommand', () => {
     expect(process.exitCode).toBeUndefined();
 
     logSpy.mockRestore();
-  });
-});
-
-describe('CLI program — stub commands', () => {
-  it('a not-yet-implemented stub command (new-system) sets a non-zero exit code', async () => {
-    const program = createProgram();
-    program.exitOverride(); // don't let a Commander parse error call the real process.exit in this test
-
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    await program.parseAsync(['new-system', 'sample-name'], { from: 'user' });
-
-    expect(process.exitCode).toBe(1);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('not implemented yet'));
-
-    errorSpy.mockRestore();
   });
 });
 
@@ -320,6 +305,176 @@ describe('CLI program — new-feature wiring', () => {
     expect(ledgerFiles[0]).toMatch(/^feat-\d{4}-\d{2}-\d{2}-wired-feature\.ledger\.yaml$/);
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Created feature spec'));
+
+    logSpy.mockRestore();
+  });
+});
+
+describe('newSystemCommand', () => {
+  it('sets a non-zero exit code and prints a clear message when the repo is not installed', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(newSystemCommand('demo-system', tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(String(errorSpy.mock.calls[0]?.[0])).toContain('waypoint install');
+
+    errorSpy.mockRestore();
+  });
+
+  it('sets a non-zero exit code and prints a clear message on an invalid name', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(newSystemCommand('../escape', tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    errorSpy.mockRestore();
+  });
+
+  it('sets a non-zero exit code and prints a clear message on a spec-name collision, without overwriting any file', async () => {
+    await installCommand(tmpDir);
+    await newSystemCommand('demo-system', tmpDir);
+
+    const specDir = path.join(tmpDir, 'specs', 'systems', 'demo-system');
+    const prdPath = path.join(specDir, 'prd.md');
+    const architecturePath = path.join(specDir, 'architecture.md');
+    const adrPath = path.join(specDir, 'adr.md');
+    const ledgerFiles = readdirSync(path.join(tmpDir, 'tasks')).filter((f) =>
+      f.endsWith('.ledger.yaml')
+    );
+    expect(ledgerFiles).toHaveLength(1);
+    const ledgerPath = path.join(tmpDir, 'tasks', ledgerFiles[0]!);
+
+    const originalPrd = readFileSync(prdPath, 'utf8');
+    const originalArchitecture = readFileSync(architecturePath, 'utf8');
+    const originalAdr = readFileSync(adrPath, 'utf8');
+    const originalLedger = readFileSync(ledgerPath, 'utf8');
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(newSystemCommand('demo-system', tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    expect(readFileSync(prdPath, 'utf8')).toBe(originalPrd);
+    expect(readFileSync(architecturePath, 'utf8')).toBe(originalArchitecture);
+    expect(readFileSync(adrPath, 'utf8')).toBe(originalAdr);
+    expect(readFileSync(ledgerPath, 'utf8')).toBe(originalLedger);
+
+    errorSpy.mockRestore();
+  });
+
+  it('sets a non-zero exit code and prints a clear message on a ledger-name collision, without writing the spec-set', async () => {
+    await installCommand(tmpDir);
+    const id = `system-${todayIsoDateForTest()}-demo-system`;
+    const ledgerPath = path.join(tmpDir, 'tasks', `${id}.ledger.yaml`);
+    writeFileSync(ledgerPath, 'spec_id: other\n');
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(newSystemCommand('demo-system', tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(String(errorSpy.mock.calls[0]?.[0])).toContain(ledgerPath);
+    expect(existsSync(path.join(tmpDir, 'specs', 'systems', 'demo-system'))).toBe(false);
+
+    errorSpy.mockRestore();
+  });
+
+  it('leaves the exit code untouched, creates all four files, and logs a relative-path confirmation on a clean run', async () => {
+    await installCommand(tmpDir);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(newSystemCommand('demo-system', tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBeUndefined();
+    const specDir = path.join(tmpDir, 'specs', 'systems', 'demo-system');
+    expect(existsSync(path.join(specDir, 'prd.md'))).toBe(true);
+    expect(existsSync(path.join(specDir, 'architecture.md'))).toBe(true);
+    expect(existsSync(path.join(specDir, 'adr.md'))).toBe(true);
+
+    const ledgerFiles = readdirSync(path.join(tmpDir, 'tasks')).filter((f) =>
+      f.endsWith('.ledger.yaml')
+    );
+    expect(ledgerFiles).toHaveLength(1);
+    expect(ledgerFiles[0]).toMatch(/^system-\d{4}-\d{2}-\d{2}-demo-system\.ledger\.yaml$/);
+    const ledgerRelPath = path.join('tasks', ledgerFiles[0]!);
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const logged = String(logSpy.mock.calls[0]?.[0]);
+    expect(logged).toContain('Created system spec');
+    expect(logged).toContain(path.join('specs', 'systems', 'demo-system'));
+    expect(logged).toContain(ledgerRelPath);
+    // Relative, not absolute: must not contain the tmpDir prefix.
+    expect(logged).not.toContain(tmpDir);
+
+    logSpy.mockRestore();
+  });
+
+  it('sets a non-zero exit code and prints the underlying error on a non-domain failure', async () => {
+    await installCommand(tmpDir);
+
+    // Force createSystemSpec's own `mkdir(specDir, { recursive: true })` to
+    // hit a raw filesystem error (not one of the domain error types):
+    // replace specs/systems with a plain file, so that mkdir call — which
+    // happens before any write is attempted, outside any try/catch that
+    // would translate an EEXIST into a domain error — fails (ENOTDIR on
+    // Linux, EEXIST on macOS) with the raw error. Mirrors
+    // newFeatureCommand's/newPatchCommand's equivalent tests, which block
+    // their own target's parent directory the same way.
+    rmSync(path.join(tmpDir, 'specs', 'systems'), { recursive: true, force: true });
+    writeFileSync(path.join(tmpDir, 'specs', 'systems'), 'not a directory\n');
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(newSystemCommand('demo-system', tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const logged = String(errorSpy.mock.calls[0]?.[0]);
+    expect(logged).toMatch(/^Error: /);
+    expect(logged).not.toContain('waypoint new-system:');
+    expect(logged).toContain(path.join(tmpDir, 'specs', 'systems'));
+
+    errorSpy.mockRestore();
+  });
+});
+
+describe('CLI program — new-system wiring', () => {
+  it('wires "waypoint new-system <name>" through the real command-parsing path to createSystemSpec', async () => {
+    await installCommand(tmpDir);
+
+    const program = createProgram();
+    program.exitOverride(); // don't let a Commander parse error call the real process.exit in this test
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // program.ts's action calls newSystemCommand(name) with the default
+    // cwd (process.cwd()) — exercise that real wiring by pointing the
+    // process at tmpDir for the duration of this call, restoring after.
+    const originalCwd = process.cwd();
+    process.chdir(tmpDir);
+    try {
+      await program.parseAsync(['new-system', 'wired-system'], { from: 'user' });
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    expect(process.exitCode).toBeUndefined();
+    const specDir = path.join(tmpDir, 'specs', 'systems', 'wired-system');
+    expect(existsSync(path.join(specDir, 'prd.md'))).toBe(true);
+    expect(existsSync(path.join(specDir, 'architecture.md'))).toBe(true);
+    expect(existsSync(path.join(specDir, 'adr.md'))).toBe(true);
+
+    const ledgerFiles = readdirSync(path.join(tmpDir, 'tasks')).filter((f) =>
+      f.endsWith('.ledger.yaml')
+    );
+    expect(ledgerFiles).toHaveLength(1);
+    expect(ledgerFiles[0]).toMatch(/^system-\d{4}-\d{2}-\d{2}-wired-system\.ledger\.yaml$/);
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Created system spec'));
 
     logSpy.mockRestore();
   });
