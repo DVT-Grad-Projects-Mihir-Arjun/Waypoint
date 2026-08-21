@@ -40,3 +40,12 @@ export {
 } from './templates/system.js';
 export { renderSystemLedgerYaml } from './templates/system-ledger.js';
 export type { SystemLedger, SystemLedgerTask } from './templates/system-ledger.js';
+
+export {
+  updateSpec,
+  SpecNotFoundError,
+  PatchTierUpdateNotSupportedError,
+  DuplicateSpecIdError,
+  LedgerNotFoundError,
+} from './update-spec.js';
+export type { UpdateSpecResult } from './update-spec.js';

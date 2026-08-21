@@ -3,6 +3,7 @@ import { installCommand } from './commands/install.js';
 import { newPatchCommand } from './commands/new-patch.js';
 import { newFeatureCommand } from './commands/new-feature.js';
 import { newSystemCommand } from './commands/new-system.js';
+import { updateCommand } from './commands/update.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -50,6 +51,15 @@ export function createProgram(): Command {
     )
     .action(async (name: string) => {
       await newSystemCommand(name);
+    });
+
+  program
+    .command('update <spec-id>')
+    .description(
+      'Sync hand-filled ### ADDED bullets into the ledger, then append a fresh empty ## Delta — <date> block (Feature/System tier only)'
+    )
+    .action(async (specId: string) => {
+      await updateCommand(specId);
     });
 
   return program;
