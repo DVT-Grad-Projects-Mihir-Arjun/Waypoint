@@ -6,6 +6,7 @@ import { newSystemCommand } from './commands/new-system.js';
 import { updateCommand } from './commands/update.js';
 import { checkDriftCommand } from './commands/check-drift.js';
 import { gateCommand } from './commands/gate.js';
+import { verifyCommand } from './commands/verify.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -80,6 +81,15 @@ export function createProgram(): Command {
     )
     .action(async () => {
       await gateCommand();
+    });
+
+  program
+    .command('verify <spec-id> <task-id>')
+    .description(
+      'Run check_command and, only on success, atomically write linked_commit/status/verified_by_gate for one ledger task and commit only the ledger file (the sole write path for ledger completion fields)'
+    )
+    .action(async (specId: string, taskId: string) => {
+      await verifyCommand(specId, taskId);
     });
 
   return program;
