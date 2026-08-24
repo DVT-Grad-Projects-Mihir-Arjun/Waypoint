@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-20-2026 13:35
-last_updated: 08-24-2026 09:55
+last_updated: 08-24-2026 14:10
 project: Alt-Methodology
 project_key: NOKEY
 tracking_system: file-system
@@ -51,7 +51,7 @@ development_status:
   3-1-tier-classification-via-config-driven-globs: review
   3-2-pre-commit-gate-blocks-missing-spec-deltas: review
   3-3-task-ledger-with-verify-only-completion: review
-  3-4-human-only-approval: backlog
+  3-4-human-only-approval: review
   3-5-ci-enforces-the-same-gate-plus-done-claim-correctness: backlog
   epic-3-retrospective: optional
 

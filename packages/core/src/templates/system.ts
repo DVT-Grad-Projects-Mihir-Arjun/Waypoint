@@ -20,6 +20,11 @@
  * (unlike Feature's documented `feat-`), so inventing one risks the exact
  * "which abbreviation" ambiguity Story 1.2's review flagged for
  * `feat-`/`feature-`.
+ *
+ * `phase_approvals: []` (Story 3.4) is the per-phase-boundary approval
+ * record `waypoint approve` appends to, one entry per distinct `phase`
+ * number the matching ledger tracks — starts empty, since nothing has been
+ * approved yet at scaffold time.
  */
 
 /**
@@ -51,6 +56,7 @@ status: draft
 approved_by: null
 approved_at: null
 created_at: ${createdAt}
+phase_approvals: []
 ---
 
 # ${name}

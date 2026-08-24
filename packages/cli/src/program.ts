@@ -7,6 +7,7 @@ import { updateCommand } from './commands/update.js';
 import { checkDriftCommand } from './commands/check-drift.js';
 import { gateCommand } from './commands/gate.js';
 import { verifyCommand } from './commands/verify.js';
+import { approveCommand } from './commands/approve.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -90,6 +91,18 @@ export function createProgram(): Command {
     )
     .action(async (specId: string, taskId: string) => {
       await verifyCommand(specId, taskId);
+    });
+
+  program
+    .command('approve <spec-id>')
+    .description(
+      "Human-run approval gate (FR8): Feature tier sets status: approved once; System tier " +
+        'records each phase boundary distinctly, flipping status: approved only once every ' +
+        'ledger phase has been approved. Not intended for agent invocation -- a documentation-' +
+        'layer convention (Epic 4), not a technical block enforced by this command'
+    )
+    .action(async (specId: string) => {
+      await approveCommand(specId);
     });
 
   return program;
