@@ -141,3 +141,27 @@ Findings from code review that are real but out of scope for their source story 
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-3-task-ledger-with-verify-only-completion.md`
   summary: `verifyTask`'s `commit-failed` outcome doesn't distinguish a `writeFile` failure (the ledger write itself) from an actual `git add`/`git commit` failure — both produce the same message ("could not commit the ledger update"), which could misdirect troubleshooting for the rarer writeFile-failure case.
   evidence: Confirmed by reading the single try/catch wrapping all three operations in `verify.ts`. Low value fix relative to cost — the message is still broadly accurate (something in the write-then-commit sequence failed and was rolled back) even when imprecise about which step.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-human-only-approval.md`
+  summary: `approve.ts`'s `parseFrontmatterObject` silently swallows any YAML parse error on a spec's frontmatter block and returns `{}` rather than surfacing a clear error, so a spec whose frontmatter is malformed in a way that still keeps the fixed-shape regexes (`status: draft`, etc.) matchable would have its write proceed against a `{}` read-model — e.g. `fm.status === 'approved'`/`readPhaseApprovals(fm)` would both silently treat real, unparsed data as absent.
+  evidence: Confirmed by reading `parseFrontmatterObject` directly (three review lenses independently flagged this) — the `catch { return {}; }` has no distinguishing signal for "genuinely empty" vs. "failed to parse." Requires a specifically-malformed-YAML input that nonetheless keeps every fixed-shape line intact, an unusual and likely hand-crafted/adversarial shape; deferred rather than patched immediately, since surfacing this properly means deciding whether a parse failure should hard-fail the whole `approve` call (a behavior change) rather than a one-line fix.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-human-only-approval.md`
+  summary: `readPhaseApprovals` silently drops any `phase_approvals` array entry that isn't a well-formed `{phase: number, ...}` object, so a hand-corrupted entry is not just ignored on read but permanently lost the next time `approve` rewrites the line (the array is re-rendered from only the entries that survived parsing).
+  evidence: Confirmed by reading `readPhaseApprovals` directly (flagged by two review lenses). Requires a hand-edited `phase_approvals` array to trigger; deferred as an adversarial-input-only scenario, not a gap in the story's own normal-usage behavior.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-human-only-approval.md`
+  summary: `readLedgerDistinctPhases` accepts any ledger task whose `phase` field is `typeof 'number'`, which includes a hand-typed YAML `.nan` (parsed as JavaScript `NaN`) — `NaN` would pass the numeric check, enter the `Set`, and then break the ascending sort comparator (`NaN` compares unequal to everything, including itself).
+  evidence: Identified by the edge-case-hunter review lens; requires a hand-typed `.nan` literal in the ledger YAML, an adversarial/corrupted-input scenario rather than anything reachable through this codebase's own ledger-writing paths (`verify.ts`, `update-spec.ts`'s sync pass). Deferred rather than patched now.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-human-only-approval.md`
+  summary: There is a narrow TOCTOU window between `findSpecById`'s read of a spec file and `approveFeatureSpec`/`approveSystemSpec`'s own separate `readFile` of the same path — if the file is deleted or replaced in between, a raw `ENOENT` (or similarly unwrapped filesystem error) could escape instead of a clear, `approve`-specific error.
+  evidence: Identified by the edge-case-hunter review lens. Matches an already-accepted class of narrow race in this codebase elsewhere (e.g. `update-spec.ts`'s own re-read-after-`findSpecById` pattern) that has never been specially guarded; deferred for consistency with that precedent rather than treated as a Story-3.4-specific gap.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-human-only-approval.md`
+  summary: A hand-edited `phase_approvals` entry missing `approved_at` entirely would have `record.approved_at` read as `undefined`, and `readPhaseApprovals`'s fallback (`String(record.approved_at)`) persists that as the literal string `"undefined"` on the next rewrite, rather than treating the entry as malformed.
+  evidence: Identified by the edge-case-hunter review lens. Requires a hand-corrupted `phase_approvals` entry; same adversarial-input-only bucket as the other `readPhaseApprovals`/`parseFrontmatterObject` findings above, deferred together with them rather than patched individually.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-human-only-approval.md`
+  summary: `LedgerNotFoundError` is reused for three distinct failure shapes in `readLedgerDistinctPhases` (the ledger file is missing, the ledger YAML fails to parse, and the ledger parses but lacks a `tasks` array) — all three surface as the same error class with only the message text distinguishing them, which could complicate future error-specific handling.
+  evidence: Identified by the blind-hunter review lens; a naming/taxonomy precision nit rather than a behavioral gap — a caller catching `LedgerNotFoundError` today gets a correct, clear message in all three cases. Deferred as a cosmetic follow-up, not worth a new error class for three low-likelihood failure shapes.

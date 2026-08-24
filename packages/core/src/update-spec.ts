@@ -143,8 +143,12 @@ export interface UpdateSpecResult {
  * rationale, and same implementation, as `new-spec.ts`'s own (unexported)
  * `todayIsoDate()`: a user running the command late at night or early
  * morning should get the date that matches their own "today," not UTC's.
+ *
+ * Exported so `approve.ts` (Story 3.4) can stamp `approved_at` with the exact
+ * same "today" semantics as everything else in this codebase, instead of a
+ * second, potentially-drifting implementation.
  */
-function todayIsoDate(): string {
+export function todayIsoDate(): string {
   const d = new Date();
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -165,8 +169,12 @@ const FRONTMATTER_BLOCK_PATTERN = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)([\s\S]*)$/;
  * re-serialized — so `updateSpec()` can guarantee it round-trips
  * byte-identical, per this story's "never modify the spec's frontmatter"
  * constraint.
+ *
+ * Exported so `approve.ts` (Story 3.4) can reuse the identical byte-fidelity
+ * isolation logic for its own targeted, line-level frontmatter edits, rather
+ * than re-deriving the same substring split a second time.
  */
-function splitFrontmatter(raw: string): { frontmatterBlock: string; body: string } | null {
+export function splitFrontmatter(raw: string): { frontmatterBlock: string; body: string } | null {
   const match = raw.match(FRONTMATTER_BLOCK_PATTERN);
   if (!match) return null;
   return { frontmatterBlock: match[1]!, body: match[2]! };

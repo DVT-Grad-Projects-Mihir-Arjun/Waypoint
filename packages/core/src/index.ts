@@ -43,12 +43,23 @@ export type { SystemLedger, SystemLedgerTask } from './templates/system-ledger.j
 
 export {
   updateSpec,
+  findSpecById,
+  splitFrontmatter,
+  todayIsoDate,
   SpecNotFoundError,
   PatchTierUpdateNotSupportedError,
   DuplicateSpecIdError,
   LedgerNotFoundError,
 } from './update-spec.js';
-export type { UpdateSpecResult } from './update-spec.js';
+export type { UpdateSpecResult, FoundSpec } from './update-spec.js';
+
+export {
+  approveSpec,
+  PatchTierApprovalNotSupportedError,
+  FrontmatterFieldNotFoundError,
+  NoPhaseTrackedTasksError,
+} from './approve.js';
+export type { ApproveResult } from './approve.js';
 
 export { checkDrift } from './check-drift.js';
 export type { DriftFinding, CheckDriftResult } from './check-drift.js';
