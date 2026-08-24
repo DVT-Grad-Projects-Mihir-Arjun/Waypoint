@@ -67,13 +67,19 @@ export interface ClassifyChangedFilesResult {
 type LoadPatchGlobsResult = { ok: true; globs: string[] } | { ok: false; error: string };
 
 /**
- * Repo-root-relative, OS-separator path to the config file, used both to
- * build the absolute path read below and to name the file in every
- * config-error message. Exported so Story 3.2's `gate()` reuses this single
- * definition (e.g. for its config-error violation's `file` field) instead of
- * a second, independently-drifting literal.
+ * Repo-root-relative, `/`-separated path to the config file — deliberately a
+ * forward-slash literal, not `path.join(...)`, so it stays consistent with
+ * every other repo-relative path this module hands back (all `/`-separated,
+ * matching a `git diff` path's shape regardless of host OS) rather than
+ * silently becoming backslash-separated on Windows. `path.join` still
+ * accepts a forward-slash segment correctly on every platform, so this is
+ * safe to use unchanged when building the absolute path read below. Used
+ * both there and to name the file in every config-error message. Exported so
+ * Story 3.2's `gate()` reuses this single definition (e.g. for its
+ * config-error violation's `file` field) instead of a second,
+ * independently-drifting literal.
  */
-export const CONFIG_RELATIVE_PATH = path.join('.waypoint', 'config.yaml');
+export const CONFIG_RELATIVE_PATH = '.waypoint/config.yaml';
 
 /**
  * Loads and validates `tiers.patch` from `.waypoint/config.yaml` in
