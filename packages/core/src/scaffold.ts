@@ -157,8 +157,13 @@ async function isLockStale(lockDir: string): Promise<boolean> {
  * crashed/killed process) before giving up — a stale lock is reclaimed and
  * acquisition is retried once, instead of permanently blocking every future
  * `waypoint install` in this repo.
+ *
+ * Exported so `verify.ts` (Story 3.3) can reuse this exact mechanism against
+ * its own, distinct lock path (`.waypoint/.gate-state/.verify-<spec-id>.lock`)
+ * to serialize its `.gate-state` read-merge-write, instead of a second,
+ * independently-drifting implementation.
  */
-async function acquireLock(lockDir: string): Promise<boolean> {
+export async function acquireLock(lockDir: string): Promise<boolean> {
   const deadline = Date.now() + LOCK_MAX_WAIT_MS;
   for (;;) {
     try {
@@ -188,7 +193,7 @@ async function acquireLock(lockDir: string): Promise<boolean> {
   }
 }
 
-async function releaseLock(lockDir: string): Promise<void> {
+export async function releaseLock(lockDir: string): Promise<void> {
   // Best-effort: a failure to clean up the lock dir must never mask the
   // scaffold's real result/error.
   await rm(lockDir, { recursive: true, force: true }).catch(() => {});

@@ -68,3 +68,6 @@ export type {
 
 export { gate } from './gate.js';
 export type { GateInput, GateResult, GateMode, GateViolation } from './gate.js';
+
+export { verifyTask } from './verify.js';
+export type { VerifyResult } from './verify.js';

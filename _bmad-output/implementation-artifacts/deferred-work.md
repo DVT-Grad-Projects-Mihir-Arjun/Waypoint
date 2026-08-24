@@ -129,3 +129,15 @@ Findings from code review that are real but out of scope for their source story 
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-gate-cli-and-hook-installation.md`
   summary: `installCommand` prints `scaffold()`'s new `warnings` entries via `console.log` (stdout), while `gateCommand`'s own failure/violation output uses `console.error` (stderr) — an inconsistent convention across the two commands for "something's not fully working" output.
   evidence: A stylistic/UX judgment call with no single clearly-correct answer (installs still succeed overall even with a warning, arguably belonging on stdout; but a warning about degraded enforcement arguably deserves stderr's attention-grabbing convention) — not a functional bug either way, so left as a defer rather than a unilateral pick.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-task-ledger-with-verify-only-completion.md`
+  summary: `verify.ts`'s ledger and `.gate-state` writes are not atomic (no temp-file+rename) — a crash exactly mid-`writeFile` could leave either file truncated, and for `.gate-state` specifically (a single JSON blob shared by every task in a spec) a torn write could threaten the "multiple tasks' hashes preserved" guarantee.
+  evidence: Confirmed by reading `verify.ts` directly. Not treated as this story's own gap: this codebase has no established atomic-write convention anywhere (`scaffold.ts`, `gitignore.ts`, `new-spec.ts` all write directly), so introducing one here would be new scope beyond matching existing risk tolerance, not a fix to a story-specific oversight.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-task-ledger-with-verify-only-completion.md`
+  summary: `verifyTask` doesn't detect a ledger with two task rows sharing the same `id` — only the first match from `tasks.find()` is ever read or written, so a hand-edited duplicate id would silently ignore the intended second row.
+  evidence: Confirmed by reading the `tasks.find((t) => t.id === taskId)` call sites directly. Very low real-world likelihood (ledgers are machine-generated with sequential `t1`/`t2`/`t3` ids; a collision requires a deliberate or careless hand-edit), not worth a dedicated guard for MVP.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-task-ledger-with-verify-only-completion.md`
+  summary: `verifyTask`'s `commit-failed` outcome doesn't distinguish a `writeFile` failure (the ledger write itself) from an actual `git add`/`git commit` failure — both produce the same message ("could not commit the ledger update"), which could misdirect troubleshooting for the rarer writeFile-failure case.
+  evidence: Confirmed by reading the single try/catch wrapping all three operations in `verify.ts`. Low value fix relative to cost — the message is still broadly accurate (something in the write-then-commit sequence failed and was rolled back) even when imprecise about which step.
