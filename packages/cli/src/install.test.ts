@@ -1,4 +1,13 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +64,96 @@ describe('installCommand', () => {
     await expect(installCommand(tmpDir)).resolves.toBeUndefined();
 
     expect(process.exitCode).toBeUndefined();
+
+    logSpy.mockRestore();
+  });
+
+  it('installs both hook files, executable, when .git is present, and logs nothing under a "warning" line', async () => {
+    mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(installCommand(tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBeUndefined();
+
+    const preCommitPath = path.join(tmpDir, '.git', 'hooks', 'pre-commit');
+    const preMergeCommitPath = path.join(tmpDir, '.git', 'hooks', 'pre-merge-commit');
+    expect(existsSync(preCommitPath)).toBe(true);
+    expect(existsSync(preMergeCommitPath)).toBe(true);
+    // Windows' fs layer doesn't implement POSIX permission bits, so this
+    // exact-mode assertion is POSIX-only — matches the scaffold.test.ts
+    // precedent guarding the same underlying chmod call.
+    if (process.platform !== 'win32') {
+      expect(statSync(preCommitPath).mode & 0o777).toBe(0o755);
+      expect(statSync(preMergeCommitPath).mode & 0o777).toBe(0o755);
+    }
+
+    const logged = logSpy.mock.calls.map((call) => String(call[0]));
+    expect(logged.some((line) => line.includes('created') && line.includes('pre-commit'))).toBe(
+      true
+    );
+    expect(logged.some((line) => line.startsWith('  warning'))).toBe(false);
+
+    logSpy.mockRestore();
+  });
+
+  it('prints a warning line naming the skipped hooks when .git is absent, without failing the install', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(installCommand(tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBeUndefined();
+    expect(existsSync(path.join(tmpDir, '.git', 'hooks', 'pre-commit'))).toBe(false);
+
+    const logged = logSpy.mock.calls.map((call) => String(call[0]));
+    expect(logged.some((line) => line.startsWith('  warning') && line.includes('.git'))).toBe(
+      true
+    );
+
+    logSpy.mockRestore();
+  });
+
+  it('reports both hooks as kept, plus a warning, when a foreign pre-existing hook is left untouched', async () => {
+    mkdirSync(path.join(tmpDir, '.git', 'hooks'), { recursive: true });
+    writeFileSync(
+      path.join(tmpDir, '.git', 'hooks', 'pre-commit'),
+      '#!/bin/sh\necho "foreign hook"\n'
+    );
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(installCommand(tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBeUndefined();
+    expect(readFileSync(path.join(tmpDir, '.git', 'hooks', 'pre-commit'), 'utf8')).toContain(
+      'foreign hook'
+    );
+
+    const logged = logSpy.mock.calls.map((call) => String(call[0]));
+    expect(logged.some((line) => line.includes('kept') && line.includes('pre-commit'))).toBe(true);
+    expect(
+      logged.some((line) => line.startsWith('  warning') && line.includes('pre-commit'))
+    ).toBe(true);
+
+    logSpy.mockRestore();
+  });
+
+  it('reports both hooks as kept, with no warning, when re-installing over its own already-installed hooks', async () => {
+    mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    await installCommand(tmpDir);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(installCommand(tmpDir)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBeUndefined();
+    const logged = logSpy.mock.calls.map((call) => String(call[0]));
+    expect(logged.some((line) => line.includes('kept') && line.includes('pre-commit'))).toBe(true);
+    expect(logged.some((line) => line.includes('kept') && line.includes('pre-merge-commit'))).toBe(
+      true
+    );
+    expect(logged.some((line) => line.startsWith('  warning'))).toBe(false);
 
     logSpy.mockRestore();
   });
