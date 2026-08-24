@@ -94,9 +94,18 @@ type LedgerFileShape = Record<string, unknown> & {
 
 const GATE_STATE_DIRNAME = '.gate-state';
 
-/** Repo-root-relative path to the task ledger for `specId`. */
+/**
+ * Repo-root-relative, `/`-separated path to the task ledger for `specId` —
+ * a forward-slash literal, not `path.join(...)`, so it stays consistent on
+ * every platform: used both in human-readable messages and as the exact
+ * pathspec passed to `git add`/`git commit --only` (whose own reporting,
+ * e.g. `git show --name-only`, always normalizes to forward-slash
+ * regardless of host OS) and to build the absolute path read/written below
+ * (`path.join` still resolves a forward-slash segment correctly on every
+ * platform, confirmed by direct testing during Story 3.2's planning).
+ */
 function ledgerRelativePath(specId: string): string {
-  return path.join('tasks', `${specId}.ledger.yaml`);
+  return `tasks/${specId}.ledger.yaml`;
 }
 
 /**
@@ -145,7 +154,10 @@ type LoadCheckCommandResult = { ok: true; checkCommand: string } | { ok: false; 
  * that ran and failed.
  */
 async function loadCheckCommand(repoRoot: string): Promise<LoadCheckCommandResult> {
-  const configRelPath = path.join('.waypoint', 'config.yaml');
+  // Forward-slash literal, not `path.join(...)` — see `ledgerRelativePath`'s
+  // doc comment for why (the same Windows-backslash-in-messages issue that
+  // broke Story 3.2's CONFIG_RELATIVE_PATH once already this session).
+  const configRelPath = '.waypoint/config.yaml';
   const configPath = path.join(repoRoot, configRelPath);
 
   let raw: string;
@@ -547,7 +559,13 @@ export async function verifyTask(repoRoot: string, specId: string, taskId: strin
     freshTask.status = 'done';
     freshTask.verified_by_gate = true;
 
-    const relLedgerPath = path.relative(repoRoot, ledgerAbsPath);
+    // Reuse `ledgerRelativePath(specId)` directly rather than re-deriving via
+    // `path.relative(repoRoot, ledgerAbsPath)` — `path.relative`'s own output
+    // is always OS-native-separated (backslash on Windows), which git accepts
+    // as a pathspec but reports back forward-slash-normalized regardless
+    // (e.g. via `git show --name-only`), corrupting the exact-string
+    // comparisons this module's callers rely on.
+    const relLedgerPath = ledgerRelativePath(specId);
     const gitStdio: { cwd: string; encoding: 'utf8'; stdio: ['pipe', 'pipe', 'pipe'] } = {
       cwd: repoRoot,
       encoding: 'utf8',

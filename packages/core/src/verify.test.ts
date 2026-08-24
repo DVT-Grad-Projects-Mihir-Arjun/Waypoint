@@ -159,7 +159,10 @@ describe('verifyTask -- successful verify', () => {
     const log = git(['log', '--oneline'], tmpDir).trim().split('\n');
     expect(log).toHaveLength(2);
     const changedFiles = git(['show', '--name-only', '--pretty=format:', 'HEAD'], tmpDir).trim();
-    expect(changedFiles).toBe(path.join('tasks', `${SPEC_ID}.ledger.yaml`));
+    // `git show`'s own path reporting is always forward-slash-normalized,
+    // regardless of host OS -- compare against a literal, not `path.join`
+    // (which would produce a backslash on Windows and never match).
+    expect(changedFiles).toBe(`tasks/${SPEC_ID}.ledger.yaml`);
     expect(trackedStatus(tmpDir)).toBe('');
 
     const gateState = readGateState(tmpDir, SPEC_ID);
@@ -563,6 +566,7 @@ describe('verifyTask -- end-to-end through the real installed Story 3.2 gate hoo
 
     expect(result.outcome).toBe('verified');
     const changedFiles = git(['show', '--name-only', '--pretty=format:', 'HEAD'], tmpDir).trim();
-    expect(changedFiles).toBe(path.join('tasks', `${specId}.ledger.yaml`));
+    // See the "successful verify" test above for why this is a literal, not `path.join`.
+    expect(changedFiles).toBe(`tasks/${specId}.ledger.yaml`);
   }, 20000);
 });

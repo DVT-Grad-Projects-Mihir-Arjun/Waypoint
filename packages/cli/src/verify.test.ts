@@ -234,7 +234,10 @@ describe('CLI program -- verify wiring, real git repo (not mocked)', () => {
     expect(ledgerRaw).toContain(initialHead);
 
     const changedFiles = git(['show', '--name-only', '--pretty=format:', 'HEAD'], tmpDir).trim();
-    expect(changedFiles).toBe(path.join('tasks', `${specId}.ledger.yaml`));
+    // `git show`'s own path reporting is always forward-slash-normalized,
+    // regardless of host OS -- compare against a literal, not `path.join`
+    // (which would produce a backslash on Windows and never match).
+    expect(changedFiles).toBe(`tasks/${specId}.ledger.yaml`);
     expect(existsSync(path.join(tmpDir, '.waypoint', '.gate-state', `${specId}.json`))).toBe(true);
 
     const logCountBefore = logSpy.mock.calls.length;
