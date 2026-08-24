@@ -53,10 +53,18 @@ export type { UpdateSpecResult } from './update-spec.js';
 export { checkDrift } from './check-drift.js';
 export type { DriftFinding, CheckDriftResult } from './check-drift.js';
 
-export { classifyChangedFiles } from './gate-classify.js';
+export {
+  classifyChangedFiles,
+  isSpecTierPath,
+  normalizeSlashes,
+  CONFIG_RELATIVE_PATH,
+} from './gate-classify.js';
 export type {
   ClassificationTier,
   ClassificationReason,
   FileClassification,
   ClassifyChangedFilesResult,
 } from './gate-classify.js';
+
+export { gate } from './gate.js';
+export type { GateInput, GateResult, GateMode, GateViolation } from './gate.js';

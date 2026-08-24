@@ -66,7 +66,20 @@ export interface ClassifyChangedFilesResult {
 /** Internal result of loading and validating `tiers.patch` from `.waypoint/config.yaml`. */
 type LoadPatchGlobsResult = { ok: true; globs: string[] } | { ok: false; error: string };
 
-const CONFIG_RELATIVE_PATH = path.join('.waypoint', 'config.yaml');
+/**
+ * Repo-root-relative, `/`-separated path to the config file — deliberately a
+ * forward-slash literal, not `path.join(...)`, so it stays consistent with
+ * every other repo-relative path this module hands back (all `/`-separated,
+ * matching a `git diff` path's shape regardless of host OS) rather than
+ * silently becoming backslash-separated on Windows. `path.join` still
+ * accepts a forward-slash segment correctly on every platform, so this is
+ * safe to use unchanged when building the absolute path read below. Used
+ * both there and to name the file in every config-error message. Exported so
+ * Story 3.2's `gate()` reuses this single definition (e.g. for its
+ * config-error violation's `file` field) instead of a second,
+ * independently-drifting literal.
+ */
+export const CONFIG_RELATIVE_PATH = '.waypoint/config.yaml';
 
 /**
  * Loads and validates `tiers.patch` from `.waypoint/config.yaml` in
@@ -210,8 +223,15 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${pattern}$`);
 }
 
-/** Replaces every backslash with a forward slash, so glob matching is separator-agnostic regardless of the host OS or how the caller sourced the path (e.g. a `git diff` path is always `/`-separated). */
-function normalizeSlashes(value: string): string {
+/**
+ * Replaces every backslash with a forward slash, so glob matching (and
+ * `isSpecTierPath`) is separator-agnostic regardless of the host OS or how
+ * the caller sourced the path (e.g. a `git diff` path is always
+ * `/`-separated). Exported so every caller of `isSpecTierPath` — this
+ * module's own `frontmatterOverrideTier` included — normalizes through this
+ * single definition rather than a second copy.
+ */
+export function normalizeSlashes(value: string): string {
   return value.replace(/\\/g, '/');
 }
 
@@ -231,8 +251,13 @@ function matchesGlob(filePath: string, glob: string): boolean {
 const PATCH_OR_FEATURE_SPEC_PATTERN = /^specs\/(?:patches|features)\/[^/]+\.md$/;
 const SYSTEM_SPEC_FILE_PATTERN = /^specs\/systems\/[^/]+\/(?:prd|architecture|adr)\.md$/;
 
-/** `true` if a `/`-normalized path sits in one of the three frontmatter-override-eligible spec-tier locations. */
-function isSpecTierPath(normalizedPath: string): boolean {
+/**
+ * `true` if a `/`-normalized path sits in one of the three
+ * frontmatter-override-eligible spec-tier locations. Exported for Story
+ * 3.2's `gate()` to reuse as its single definition of "what counts as a
+ * spec file" — never re-derive a second copy of this regex.
+ */
+export function isSpecTierPath(normalizedPath: string): boolean {
   return (
     PATCH_OR_FEATURE_SPEC_PATTERN.test(normalizedPath) ||
     SYSTEM_SPEC_FILE_PATTERN.test(normalizedPath)
