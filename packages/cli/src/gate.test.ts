@@ -7,19 +7,37 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Wraps `gate` in a passthrough mock (default behavior: call straight
-// through to the real implementation) so one targeted test below can
-// temporarily make it throw, to prove `gateCommand` catches that cleanly
-// instead of letting a raw exception escape. Every other test in this file
-// relies on the real `gate()` behavior via this same passthrough.
+// Wraps `gate` and `checkDoneClaims` in passthrough mocks (default behavior:
+// call straight through to the real implementation) so targeted tests below
+// can temporarily make either one throw, to prove `gateCommand` catches that
+// cleanly instead of letting a raw exception escape -- and, for the `--ci`
+// path, that one throwing still lets the other check's result be computed
+// and reported. Every other test in this file relies on the real behavior of
+// both via these same passthroughs.
 vi.mock('@waypoint/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@waypoint/core')>();
-  return { ...actual, gate: vi.fn(actual.gate) };
+  return {
+    ...actual,
+    gate: vi.fn(actual.gate),
+    checkDoneClaims: vi.fn(actual.checkDoneClaims),
+  };
 });
 import * as waypointCore from '@waypoint/core';
 import { scaffold } from '@waypoint/core';
+
+// Passthrough-wraps `execFileSync` so the `--ci`/`--base` usage-error tests
+// below can assert zero git calls were attempted, without changing behavior
+// for any other test in this file (including this file's own `git()` fixture
+// helper, which goes through this same wrapped export).
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
+});
+import * as childProcess from 'node:child_process';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gateCommand } from './commands/gate.js';
+import { createProgram } from './program.js';
 
 // The built CLI entry point — used only to prove the *actual installed hook
 // file* (not a direct gateCommand() call) triggers correctly through a real
@@ -305,4 +323,382 @@ describe('end-to-end — the actual installed hook, invoked by a real git commit
     const log = git(['log', '--oneline'], tmpDir);
     expect(log).toContain('with delta');
   }, 20000);
+});
+
+describe('gateCommand — --ci/--base usage errors', () => {
+  it('reports a clear usage error and makes zero git calls when --ci is passed without --base', async () => {
+    const execSpy = vi.mocked(childProcess.execFileSync);
+    execSpy.mockClear();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(gateCommand(tmpDir, { ci: true })).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const logged = String(errorSpy.mock.calls[0]?.[0]);
+    expect(logged).toContain('usage error');
+    expect(logged).toContain('--ci');
+    expect(logged).toContain('--base');
+    expect(execSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+  });
+
+  it('reports a clear usage error and makes zero git calls when --base is passed without --ci', async () => {
+    const execSpy = vi.mocked(childProcess.execFileSync);
+    execSpy.mockClear();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(gateCommand(tmpDir, { base: 'main' })).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const logged = String(errorSpy.mock.calls[0]?.[0]);
+    expect(logged).toContain('usage error');
+    expect(execSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+  });
+});
+
+describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', () => {
+  function setUpMainWithScaffold(): void {
+    initGitRepo(tmpDir);
+    git(['checkout', '-b', 'main'], tmpDir);
+  }
+
+  // `scaffold()` installs the real pre-commit/pre-merge-commit hooks (`exec
+  // npx waypoint gate`), which would otherwise fire on every plain `git
+  // commit` below and try to shell out to `npx` -- slow, network-dependent,
+  // and irrelevant to what these `--ci`/`--base` tests exercise (they call
+  // `gateCommand` directly, never through the hook). Mirrors
+  // `verify.test.ts`'s own reasoning for avoiding this, applied here by
+  // removing the hooks right after `scaffold()` instead of hand-writing
+  // config, so these fixtures still get the real default config/globs.
+  function removeGateHooks(cwd: string): void {
+    rmSync(path.join(cwd, '.git', 'hooks', 'pre-commit'), { force: true });
+    rmSync(path.join(cwd, '.git', 'hooks', 'pre-merge-commit'), { force: true });
+  }
+
+  it('fails, naming the file, when a Feature-tier change between base and HEAD has no spec delta', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    git(['checkout', '-b', 'feature'], tmpDir);
+    mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export const x = 1;\n');
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'add feature code'], tmpDir);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(gateCommand(tmpDir, { ci: true, base: 'main' })).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    const logged = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('src/index.ts');
+    expect(logged).toContain('no spec delta');
+
+    errorSpy.mockRestore();
+  });
+
+  it('passes (exit 0, silent) once a qualifying spec delta is added alongside the Feature-tier change', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    git(['checkout', '-b', 'feature'], tmpDir);
+    mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export const x = 1;\n');
+    mkdirSync(path.join(tmpDir, 'specs', 'features'), { recursive: true });
+    writeFileSync(
+      path.join(tmpDir, 'specs', 'features', 'demo.md'),
+      '---\ntitle: demo\ntier: feature\n---\n\nSome delta.\n'
+    );
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'add feature code + delta'], tmpDir);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(gateCommand(tmpDir, { ci: true, base: 'main' })).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBeUndefined();
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+  });
+
+  it('reports both a spec-delta violation and a done-claim violation when both fail in the same run', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    git(['checkout', '-b', 'feature'], tmpDir);
+    mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export const x = 1;\n');
+
+    // A hand-typed status: done with a blank linked_commit -- never went
+    // through `waypoint verify` -- committed alongside the delta-less code
+    // change above, in the same PR diff.
+    mkdirSync(path.join(tmpDir, 'tasks'), { recursive: true });
+    writeFileSync(
+      path.join(tmpDir, 'tasks', 'feat-demo.ledger.yaml'),
+      'tasks:\n  - id: t1\n    status: done\n    linked_commit: null\n'
+    );
+
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'add feature code + bad ledger'], tmpDir);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(gateCommand(tmpDir, { ci: true, base: 'main' })).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    const logged = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('src/index.ts');
+    expect(logged).toContain('no spec delta');
+    expect(logged).toContain('feat-demo.ledger.yaml');
+    expect(logged).toContain('t1');
+
+    errorSpy.mockRestore();
+  });
+
+  it('reports a clear error and exits 1 when --base does not resolve in this checkout', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(
+      gateCommand(tmpDir, { ci: true, base: 'this-ref-does-not-exist' })
+    ).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const logged = String(errorSpy.mock.calls[0]?.[0]);
+    expect(logged).toContain('waypoint gate:');
+    expect(logged).toContain('this-ref-does-not-exist');
+
+    errorSpy.mockRestore();
+  });
+
+  it('still reports checkDoneClaims\' violations when gate() itself throws unexpectedly', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    git(['checkout', '-b', 'feature'], tmpDir);
+    mkdirSync(path.join(tmpDir, 'tasks'), { recursive: true });
+    writeFileSync(
+      path.join(tmpDir, 'tasks', 'feat-demo.ledger.yaml'),
+      'tasks:\n  - id: t1\n    status: done\n    linked_commit: null\n'
+    );
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'add bad ledger'], tmpDir);
+
+    const mockedGate = vi.mocked(waypointCore.gate);
+    mockedGate.mockImplementationOnce(() => {
+      throw new Error('boom: simulated internal gate failure');
+    });
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await expect(gateCommand(tmpDir, { ci: true, base: 'main' })).resolves.toBeUndefined();
+
+      expect(process.exitCode).toBe(1);
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      // gate()'s own internal-error message is reported...
+      expect(logged).toContain('internal error while evaluating the gate');
+      expect(logged).toContain('boom: simulated internal gate failure');
+      // ...and checkDoneClaims' own (unrelated, already-available) violation
+      // is still printed too -- neither check's failure silently swallows
+      // the other's result.
+      expect(logged).toContain('feat-demo.ledger.yaml');
+      expect(logged).toContain('t1');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('still reports gate()\'s violations when checkDoneClaims() itself throws unexpectedly', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    git(['checkout', '-b', 'feature'], tmpDir);
+    mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export const x = 1;\n');
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'add feature code, no delta'], tmpDir);
+
+    const mockedCheckDoneClaims = vi.mocked(waypointCore.checkDoneClaims);
+    mockedCheckDoneClaims.mockImplementationOnce(() => {
+      throw new Error('boom: simulated internal done-claim failure');
+    });
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await expect(gateCommand(tmpDir, { ci: true, base: 'main' })).resolves.toBeUndefined();
+
+      expect(process.exitCode).toBe(1);
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      // The spec-delta violation (gate()'s own, already-available result) is
+      // still printed...
+      expect(logged).toContain('src/index.ts');
+      expect(logged).toContain('no spec delta');
+      // ...and checkDoneClaims' own internal-error message is reported too.
+      expect(logged).toContain('internal error while checking done-claims');
+      expect(logged).toContain('boom: simulated internal done-claim failure');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('prints a non-blocking note, and still exits cleanly, when --base resolves to a ref with zero diff against HEAD', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // --base HEAD: a realistic copy-paste mistake -- HEAD trivially has zero
+    // diff against itself.
+    await expect(gateCommand(tmpDir, { ci: true, base: 'HEAD' })).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBeUndefined();
+    const logged = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('note:');
+    expect(logged).toContain('0 files differ');
+    expect(logged).toContain('HEAD');
+
+    errorSpy.mockRestore();
+  });
+
+  it('sanitizes control characters from a ledger-sourced linked_commit before printing it', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    git(['checkout', '-b', 'feature'], tmpDir);
+    mkdirSync(path.join(tmpDir, 'tasks'), { recursive: true });
+    // A control character (ESC, as part of an ANSI color-escape sequence)
+    // embedded in the task id -- crafted CI log injection. Written as a YAML
+    // double-quoted `\x1B` escape (not a raw byte in the file) so the YAML
+    // parser itself produces the actual ESC character in the parsed string,
+    // exactly as a hand-crafted malicious ledger would.
+    writeFileSync(
+      path.join(tmpDir, 'tasks', 'feat-demo.ledger.yaml'),
+      'tasks:\n  - id: "t1\\x1B[31m"\n    status: done\n    linked_commit: null\n'
+    );
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'add ledger with control char in id'], tmpDir);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(gateCommand(tmpDir, { ci: true, base: 'main' })).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    const logged = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).not.toContain('\x1b');
+    expect(logged).toContain('t1?[31m');
+
+    errorSpy.mockRestore();
+  });
+});
+
+describe('CLI program — gate --ci/--base wiring (real Commander argv parsing)', () => {
+  function setUpMainWithScaffold(): void {
+    initGitRepo(tmpDir);
+    git(['checkout', '-b', 'main'], tmpDir);
+  }
+
+  function removeGateHooks(cwd: string): void {
+    rmSync(path.join(cwd, '.git', 'hooks', 'pre-commit'), { force: true });
+    rmSync(path.join(cwd, '.git', 'hooks', 'pre-merge-commit'), { force: true });
+  }
+
+  it('wires "waypoint gate --ci --base <ref>" through real argv parsing to a genuine spec-delta violation', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    git(['checkout', '-b', 'feature'], tmpDir);
+    mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export const x = 1;\n');
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'add feature code, no delta'], tmpDir);
+
+    const program = createProgram();
+    program.exitOverride();
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const originalCwd = process.cwd();
+    process.chdir(tmpDir);
+    try {
+      await program.parseAsync(['gate', '--ci', '--base', 'main'], { from: 'user' });
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    expect(process.exitCode).toBe(1);
+    const logged = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('src/index.ts');
+    expect(logged).toContain('no spec delta');
+
+    errorSpy.mockRestore();
+  });
+
+  it('wires "waypoint gate --ci --base <ref>" through real argv parsing to a clean pass', async () => {
+    setUpMainWithScaffold();
+    await scaffold(tmpDir);
+    removeGateHooks(tmpDir);
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    git(['checkout', '-b', 'feature'], tmpDir);
+    writeFileSync(path.join(tmpDir, 'README.md'), '# hello\n');
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'docs only'], tmpDir);
+
+    const program = createProgram();
+    program.exitOverride();
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const originalCwd = process.cwd();
+    process.chdir(tmpDir);
+    try {
+      await program.parseAsync(['gate', '--ci', '--base', 'main'], { from: 'user' });
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    expect(process.exitCode).toBeUndefined();
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+  });
 });

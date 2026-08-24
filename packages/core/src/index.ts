@@ -82,3 +82,6 @@ export type { GateInput, GateResult, GateMode, GateViolation } from './gate.js';
 
 export { verifyTask } from './verify.js';
 export type { VerifyResult } from './verify.js';
+
+export { checkDoneClaims } from './done-claim.js';
+export type { DoneClaimResult, DoneClaimViolation } from './done-claim.js';

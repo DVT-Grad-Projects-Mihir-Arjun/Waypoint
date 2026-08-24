@@ -78,10 +78,14 @@ export function createProgram(): Command {
   program
     .command('gate')
     .description(
-      'Block a commit that changes Feature/System-tier code with no accompanying spec delta staged in the same batch (installed as a pre-commit/pre-merge-commit hook by waypoint install)'
+      'Block a commit that changes Feature/System-tier code with no accompanying spec delta staged in the same batch (installed as a pre-commit/pre-merge-commit hook by waypoint install). ' +
+        'With --ci --base <ref>, instead re-runs the spec-delta check over the full PR diff against <ref> and checks every tasks/**/*.ledger.yaml for a fabricated/unresolvable done-claim -- the mode a CI pipeline runs (npx waypoint gate --ci --base <ref>). ' +
+        'Only the spec-delta half is scoped to that diff -- the done-claim half is always a full, repo-wide sweep of every tasks/**/*.ledger.yaml file, independent of --base.'
     )
-    .action(async () => {
-      await gateCommand();
+    .option('--ci', 'Run in CI mode: full-diff spec-delta check plus done-claim correctness, instead of the staged-files pre-commit check. Requires --base <ref>. Note: the done-claim half scans the entire tasks/ tree regardless of --base -- it is not scoped to the diff the way the spec-delta half is.')
+    .option('--base <ref>', 'The base ref to diff the full PR against (e.g. the target branch) -- required together with --ci; never defaulted or auto-detected from a CI-provider env var.')
+    .action(async (options: { ci?: boolean; base?: string }) => {
+      await gateCommand(process.cwd(), options);
     });
 
   program
