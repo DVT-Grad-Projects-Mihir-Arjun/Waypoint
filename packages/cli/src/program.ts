@@ -5,6 +5,7 @@ import { newFeatureCommand } from './commands/new-feature.js';
 import { newSystemCommand } from './commands/new-system.js';
 import { updateCommand } from './commands/update.js';
 import { checkDriftCommand } from './commands/check-drift.js';
+import { gateCommand } from './commands/gate.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -70,6 +71,15 @@ export function createProgram(): Command {
     )
     .action(async () => {
       await checkDriftCommand();
+    });
+
+  program
+    .command('gate')
+    .description(
+      'Block a commit that changes Feature/System-tier code with no accompanying spec delta staged in the same batch (installed as a pre-commit/pre-merge-commit hook by waypoint install)'
+    )
+    .action(async () => {
+      await gateCommand();
     });
 
   return program;

@@ -21,6 +21,9 @@ export async function installCommand(cwd: string = process.cwd()): Promise<void>
     for (const p of result.preservedPaths) {
       console.log(`  kept     ${p}`);
     }
+    for (const warning of result.warnings) {
+      console.log(`  warning  ${warning}`);
+    }
   } catch (err) {
     if (err instanceof ScaffoldConflictError) {
       console.error(err.message);

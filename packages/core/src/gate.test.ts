@@ -380,53 +380,65 @@ describe('gate — empty batch', () => {
 });
 
 describe('gate — Acceptance Criteria: cost scales with batch size, not repo size', () => {
-  it('evaluates a batch of thousands of paths quickly, without reading anything beyond the batch', async () => {
-    await scaffold(tmpDir);
+  it(
+    'evaluates a batch of thousands of paths quickly, without reading anything beyond the batch',
+    async () => {
+      await scaffold(tmpDir);
 
-    // Decoy repo content well outside the changed-files batch. If gate() (or
-    // its classifyChangedFiles dependency) ever walked the working tree or
-    // globbed the whole repo instead of scaling with changedFiles.length,
-    // this would balloon the runtime and/or risk reading these files.
-    const decoyDir = path.join(tmpDir, 'decoy');
-    mkdirSync(decoyDir, { recursive: true });
-    for (let i = 0; i < 3000; i++) {
-      writeFileSync(path.join(decoyDir, `file-${i}.ts`), '// decoy, never in the batch\n');
-    }
-    // A decoy spec-shaped file with frontmatter that would throw if ever
-    // parsed as YAML — proving it's never touched since it's not in the batch.
-    mkdirSync(path.join(tmpDir, 'specs', 'features'), { recursive: true });
-    writeFileSync(
-      path.join(tmpDir, 'specs', 'features', 'decoy-unparseable.md'),
-      '---\ntier: [unterminated\n---\n'
-    );
+      // Decoy repo content well outside the changed-files batch. If gate() (or
+      // its classifyChangedFiles dependency) ever walked the working tree or
+      // globbed the whole repo instead of scaling with changedFiles.length,
+      // this would balloon the runtime and/or risk reading these files.
+      const decoyDir = path.join(tmpDir, 'decoy');
+      mkdirSync(decoyDir, { recursive: true });
+      for (let i = 0; i < 3000; i++) {
+        writeFileSync(path.join(decoyDir, `file-${i}.ts`), '// decoy, never in the batch\n');
+      }
+      // A decoy spec-shaped file with frontmatter that would throw if ever
+      // parsed as YAML — proving it's never touched since it's not in the batch.
+      mkdirSync(path.join(tmpDir, 'specs', 'features'), { recursive: true });
+      writeFileSync(
+        path.join(tmpDir, 'specs', 'features', 'decoy-unparseable.md'),
+        '---\ntier: [unterminated\n---\n'
+      );
 
-    const changedFiles = Array.from({ length: 5000 }, (_, i) => `src/generated-${i}.ts`);
+      const changedFiles = Array.from({ length: 5000 }, (_, i) => `src/generated-${i}.ts`);
 
-    // I/O-scope assertion: spy on every fs primitive gate()/classifyChangedFiles()
-    // actually use, and assert none of them is ever called with a path pointing
-    // at the decoy directory or the decoy unparseable spec file. This catches an
-    // implementation that stays fast (e.g. by short-circuiting) while still
-    // reading extra files it has no business touching — something the
-    // elapsed-time/violation-count checks alone would never notice.
-    (existsSync as unknown as Mock).mockClear();
-    (readFile as unknown as Mock).mockClear();
+      // I/O-scope assertion: spy on every fs primitive gate()/classifyChangedFiles()
+      // actually use, and assert none of them is ever called with a path pointing
+      // at the decoy directory or the decoy unparseable spec file. This catches an
+      // implementation that stays fast (e.g. by short-circuiting) while still
+      // reading extra files it has no business touching — something the
+      // elapsed-time/violation-count checks alone would never notice.
+      (existsSync as unknown as Mock).mockClear();
+      (readFile as unknown as Mock).mockClear();
 
-    const start = performance.now();
-    const result = await gate({ mode: 'staged', changedFiles, repoRoot: tmpDir });
-    const elapsedMs = performance.now() - start;
+      const start = performance.now();
+      const result = await gate({ mode: 'staged', changedFiles, repoRoot: tmpDir });
+      const elapsedMs = performance.now() - start;
 
-    expect(result.ok).toBe(false);
-    expect(result.violations).toHaveLength(5000);
-    expect(elapsedMs).toBeLessThan(3000);
+      expect(result.ok).toBe(false);
+      expect(result.violations).toHaveLength(5000);
+      // The 3000-decoy-file setup above (not the gate() call itself) is the
+      // dominant cost on a slower CI filesystem (Windows runners in
+      // particular are well known to be much slower for many-small-file I/O,
+      // e.g. due to antivirus scanning) — 3000ms bounds gate()'s own work,
+      // scoped by the `start`/`elapsedMs` measurement above, not the setup.
+      expect(elapsedMs).toBeLessThan(3000);
 
-    const decoySpecPath = path.join(tmpDir, 'specs', 'features', 'decoy-unparseable.md');
-    const touchedDecoy = (calls: unknown[][]) =>
-      calls.some((args) => {
-        const arg0 = args[0];
-        return typeof arg0 === 'string' && (arg0.startsWith(decoyDir) || arg0 === decoySpecPath);
-      });
+      const decoySpecPath = path.join(tmpDir, 'specs', 'features', 'decoy-unparseable.md');
+      const touchedDecoy = (calls: unknown[][]) =>
+        calls.some((args) => {
+          const arg0 = args[0];
+          return typeof arg0 === 'string' && (arg0.startsWith(decoyDir) || arg0 === decoySpecPath);
+        });
 
-    expect(touchedDecoy((existsSync as unknown as Mock).mock.calls)).toBe(false);
-    expect(touchedDecoy((readFile as unknown as Mock).mock.calls)).toBe(false);
-  });
+      expect(touchedDecoy((existsSync as unknown as Mock).mock.calls)).toBe(false);
+      expect(touchedDecoy((readFile as unknown as Mock).mock.calls)).toBe(false);
+    },
+    // Generous outer test timeout: the 3000-file setup phase (outside what
+    // `elapsedMs` measures) can itself take longer than vitest's 5s default
+    // on a slower CI filesystem, independent of gate()'s own performance.
+    30_000
+  );
 });

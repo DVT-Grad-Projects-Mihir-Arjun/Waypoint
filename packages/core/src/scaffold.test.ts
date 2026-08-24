@@ -1,4 +1,13 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  statSync,
+  chmodSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -158,6 +167,122 @@ describe('scaffold — path collision', () => {
     const result = await scaffold(tmpDir);
     expect(result.status).toBe('installed');
     expect(statSync(path.join(tmpDir, 'decisions')).isDirectory()).toBe(true);
+  });
+});
+
+describe('scaffold — git hook installation', () => {
+  const HOOK_PATHS = [
+    path.join('.git', 'hooks', 'pre-commit'),
+    path.join('.git', 'hooks', 'pre-merge-commit'),
+  ];
+
+  it('writes both hook files as executable and lists them under createdPaths when .git is present', async () => {
+    mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+
+    const result = await scaffold(tmpDir);
+
+    expect(result.status).toBe('installed');
+    expect(result.warnings).toEqual([]);
+
+    for (const rel of HOOK_PATHS) {
+      const abs = path.join(tmpDir, rel);
+      expect(existsSync(abs), `${rel} should exist`).toBe(true);
+      expect(result.createdPaths).toContain(rel);
+
+      const content = readFileSync(abs, 'utf8');
+      expect(content).toContain('#!/bin/sh');
+      expect(content).toContain('Installed by waypoint install');
+      expect(content).toContain('exec npx waypoint gate');
+
+      // Windows' fs layer doesn't implement POSIX permission bits (only a
+      // read-only attribute) — `chmod`/`stat().mode` there never reports
+      // 0o755, so this exact-mode assertion is POSIX-only, matching the
+      // Windows-awareness precedent elsewhere in this codebase.
+      if (process.platform !== 'win32') {
+        const mode = statSync(abs).mode & 0o777;
+        expect(mode).toBe(0o755);
+      }
+    }
+  });
+
+  it('reports both hooks under preservedPaths, untouched, on re-install', async () => {
+    mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+
+    await scaffold(tmpDir);
+    const result = await scaffold(tmpDir);
+
+    expect(result.status).toBe('installed');
+    expect(result.warnings).toEqual([]);
+    for (const rel of HOOK_PATHS) {
+      expect(result.preservedPaths).toContain(rel);
+      expect(result.createdPaths).not.toContain(rel);
+    }
+  });
+
+  it('preserves a foreign pre-existing hook untouched and warns about it by name', async () => {
+    mkdirSync(path.join(tmpDir, '.git', 'hooks'), { recursive: true });
+    const foreignHookPath = path.join(tmpDir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(foreignHookPath, "#!/bin/sh\necho \"some other tool's hook\"\n");
+
+    const result = await scaffold(tmpDir);
+
+    expect(result.status).toBe('installed');
+    expect(readFileSync(foreignHookPath, 'utf8')).toContain('some other tool');
+    expect(result.preservedPaths).toContain(path.join('.git', 'hooks', 'pre-commit'));
+    expect(result.createdPaths).not.toContain(path.join('.git', 'hooks', 'pre-commit'));
+    expect(result.warnings.some((w) => w.includes(path.join('.git', 'hooks', 'pre-commit')))).toBe(
+      true
+    );
+
+    // The other hook (no foreign conflict) is still installed normally.
+    expect(result.createdPaths).toContain(path.join('.git', 'hooks', 'pre-merge-commit'));
+  });
+
+  it('re-asserts the executable bit on a previously-installed Waypoint hook that lost it', async () => {
+    // Windows' fs layer doesn't implement POSIX permission bits, so this
+    // regression guard (like the exact-mode assertions above) is POSIX-only.
+    if (process.platform === 'win32') return;
+
+    mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    await scaffold(tmpDir);
+
+    const hookAbsPath = path.join(tmpDir, '.git', 'hooks', 'pre-commit');
+    chmodSync(hookAbsPath, 0o644);
+    expect(statSync(hookAbsPath).mode & 0o777).toBe(0o644);
+
+    const result = await scaffold(tmpDir);
+
+    expect(result.status).toBe('installed');
+    expect(result.warnings).toEqual([]);
+    expect(statSync(hookAbsPath).mode & 0o777).toBe(0o755);
+  });
+
+  it('skips hook installation with a warning, but still completes the rest of the scaffold, when .git is entirely absent', async () => {
+    const result = await scaffold(tmpDir);
+
+    expect(result.status).toBe('installed');
+    for (const rel of HOOK_PATHS) {
+      expect(existsSync(path.join(tmpDir, rel))).toBe(false);
+    }
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings.some((w) => w.toLowerCase().includes('.git'))).toBe(true);
+
+    // Rest of the scaffold still completed.
+    for (const rel of SIX_SCAFFOLD_PATHS) {
+      expect(existsSync(path.join(tmpDir, rel)), `${rel} should exist`).toBe(true);
+    }
+  });
+
+  it('skips hook installation with a warning when .git exists but is not a plain directory (worktree/submodule)', async () => {
+    writeFileSync(path.join(tmpDir, '.git'), 'gitdir: /elsewhere/.git/worktrees/example\n');
+
+    const result = await scaffold(tmpDir);
+
+    expect(result.status).toBe('installed');
+    for (const rel of HOOK_PATHS) {
+      expect(existsSync(path.join(tmpDir, rel))).toBe(false);
+    }
+    expect(result.warnings.length).toBeGreaterThan(0);
   });
 });
 
