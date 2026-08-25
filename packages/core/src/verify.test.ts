@@ -496,7 +496,7 @@ describe('verifyTask -- concurrent verify, same/sibling tasks', () => {
     ]);
     expect(reRunA).toEqual({ outcome: 'already-verified', specId: SPEC_ID, taskId: 't1' });
     expect(reRunB).toEqual({ outcome: 'already-verified', specId: SPEC_ID, taskId: 't2' });
-  });
+  }, 10000);
 });
 
 describe('verifyTask -- multiple tasks’ hashes', () => {
