@@ -1,6 +1,7 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse, stringify } from 'yaml';
+import { SPEC_ID_SHAPE_PATTERN, withSpecLock } from './verify.js';
 
 /**
  * `waypoint update <spec-id>` — evolves an existing Feature/System-tier spec
@@ -458,10 +459,20 @@ function renderDeltaBlock(heading: string): string {
   return `${heading}\n\n### ADDED\n\n### MODIFIED\n\n### REMOVED\n`;
 }
 
-/** The highest numeric suffix among `t<N>`-shaped ledger task ids, or `0` if there are none. */
-function maxTaskNumber(tasks: Array<{ id: unknown }>): number {
+/**
+ * The highest numeric suffix among `t<N>`-shaped ledger task ids, or `0` if
+ * there are none. A `null`/non-object row (a plausible hand-edit mistake,
+ * e.g. a stray blank list item) is skipped rather than crashing on
+ * `task.id` -- the same guard shape `status.ts`/`done-claim.ts` already
+ * apply to the identical malformed-row possibility (epic-1-5 MVP
+ * retrospective, Finding 8).
+ */
+function maxTaskNumber(tasks: Array<{ id: unknown } | null | undefined>): number {
   let max = 0;
   for (const task of tasks) {
+    if (!task || typeof task !== 'object') {
+      continue;
+    }
     const match = /^t(\d+)$/.exec(String(task.id));
     if (match) {
       max = Math.max(max, Number(match[1]));
@@ -516,13 +527,6 @@ async function readLedger(ledgerPath: string): Promise<LedgerFile> {
   return parsed as LedgerFile;
 }
 
-// Matches the shape every `create*Spec()` function actually generates
-// (`patch-<date>-<name>`, `feat-<date>-<name>`, `system-<date>-<name>`).
-// Defensive only: guards against a corrupted or adversarial frontmatter
-// `id` value escaping the `tasks/` directory when it's used to build
-// `ledgerPath` below — a real spec's id can never fail this check.
-const SPEC_ID_SHAPE_PATTERN = /^(patch|feat|system)-\d{4}-\d{2}-\d{2}-[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
-
 /**
  * Runs `waypoint update <spec-id>`'s sync-then-scaffold pass against the spec
  * matching `specId` in `cwd`, per this story's Boundaries & Constraints:
@@ -547,6 +551,14 @@ const SPEC_ID_SHAPE_PATTERN = /^(patch|feat|system)-\d{4}-\d{2}-\d{2}-[a-zA-Z0-9
  *    if the scaffold pass appended a new heading. The spec's frontmatter
  *    block is carried through byte-identical whenever the spec is written —
  *    only the body after it is ever touched.
+ *
+ * The spec-file read-through-write and the ledger read-through-write both
+ * run inside `verify.ts`'s exported `withSpecLock`, keyed by `found.id` —
+ * the *same* per-spec lock path `waypoint verify` already uses for this
+ * spec's ledger. Before this, `updateSpec()` had no locking at all, a real
+ * concurrent-write corruption risk against a concurrent `waypoint verify`
+ * or a second concurrent `waypoint update` on the same spec (epic-1-5 MVP
+ * retrospective, Findings 9 and 14).
  */
 export async function updateSpec(cwd: string, specId: string): Promise<UpdateSpecResult> {
   const found = await findSpecById(cwd, specId);
@@ -560,6 +572,16 @@ export async function updateSpec(cwd: string, specId: string): Promise<UpdateSpe
     throw new SpecNotFoundError(specId);
   }
 
+  return withSpecLock(cwd, found.id, () => updateSpecLocked(cwd, found));
+}
+
+/**
+ * The actual read-then-write body of `updateSpec()`, run inside
+ * `withSpecLock`'s critical section — see `updateSpec`'s own doc comment.
+ * `found` is re-used as resolved by the caller (outside the lock); nothing
+ * here re-resolves the spec by id.
+ */
+async function updateSpecLocked(cwd: string, found: FoundSpec): Promise<UpdateSpecResult> {
   const raw = await readFile(found.path, 'utf8');
   const split = splitFrontmatter(raw);
   if (!split) {
@@ -574,7 +596,21 @@ export async function updateSpec(cwd: string, specId: string): Promise<UpdateSpe
   const ledger = await readLedger(ledgerPath);
 
   // --- Sync pass ---
-  const existingDescriptions = new Set(ledger.tasks.map((t) => t.description.trim()));
+  // A `null`/non-object task row (a plausible hand-edit mistake, e.g. a
+  // stray blank list item) must never crash this whole call by accessing
+  // `.description` on it -- skip it and leave it out of the computed set,
+  // rather than letting a raw `TypeError` escape (epic-1-5 MVP
+  // retrospective, Finding 8; same guard shape `status.ts`/`done-claim.ts`
+  // already apply to the identical malformed-row possibility). A row that
+  // *is* a valid object but has a missing or non-string `description` field
+  // (e.g. `undefined`, a number, `null`) is skipped the same way -- calling
+  // `.trim()` on a non-string would throw just as surely as reading
+  // `.description` off a non-object would.
+  const existingDescriptions = new Set(
+    ledger.tasks
+      .filter((t): t is LedgerTaskRow => !!t && typeof t === 'object' && typeof t.description === 'string')
+      .map((t) => t.description.trim())
+  );
   const addedBullets = extractAddedBullets(body);
   let nextTaskNumber = maxTaskNumber(ledger.tasks) + 1;
   const syncedTaskIds: string[] = [];
@@ -597,10 +633,12 @@ export async function updateSpec(cwd: string, specId: string): Promise<UpdateSpe
   // would otherwise silently propagate `NaN` into the newly-synced task's
   // phase instead of being treated as `0`.
   const nextPhase =
-    ledger.tasks.reduce(
-      (max, t) => Math.max(max, Number.isFinite(t.phase) ? (t.phase as number) : 0),
-      0
-    ) + 1;
+    ledger.tasks.reduce((max, t) => {
+      // Same `null`/non-object row guard as `existingDescriptions` above --
+      // a malformed row contributes `0`, never crashes on `t.phase`.
+      if (!t || typeof t !== 'object') return max;
+      return Math.max(max, Number.isFinite(t.phase) ? (t.phase as number) : 0);
+    }, 0) + 1;
 
   for (const bulletText of addedBullets) {
     if (existingDescriptions.has(bulletText)) continue;

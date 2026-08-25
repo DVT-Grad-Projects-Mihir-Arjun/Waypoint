@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
 import { findAllSpecs, splitFrontmatter } from './update-spec.js';
-import { computeLedgerTaskHash } from './verify.js';
+import { computeLedgerTaskHash, isPathUnsafeId, readStoredHash } from './verify.js';
 
 /**
  * `waypoint status` (Story 5.1) — a read-only reporter that enumerates every
@@ -93,23 +93,6 @@ interface ParsedLedger {
 }
 
 /**
- * Rejects a spec id that could escape its intended filesystem locations —
- * the task ledger path (`tasks/<specId>.ledger.yaml`) and the `.gate-state`
- * path (`.waypoint/.gate-state/<specId>.json`) are both built directly from
- * this string, by simple template interpolation, with no other validation.
- * Mirrors `verify.ts`'s own `validatePathSafeIds` guard on the identical
- * path-construction pattern, adapted to this module's "skip and report as
- * unreadable" style rather than a throwing/result-returning style: unlike
- * `verify.ts`'s `<spec-id>` (a CLI argument a human/agent typed), this
- * module's `spec.id` comes straight from a spec file's own frontmatter with
- * no shape validation upstream, so a hand-edited or adversarial frontmatter
- * `id` (e.g. containing `../`) must never reach `path.join`.
- */
-function isPathUnsafeId(value: string): boolean {
-  return value.includes('/') || value.includes('\\') || value.includes('..');
-}
-
-/**
  * Reads and parses `tasks/<specId>.ledger.yaml`, returning `null` — never
  * throwing — if the file can't be read, isn't valid YAML, or doesn't parse
  * to an object with a top-level `tasks` array. The caller maps `null` to
@@ -142,26 +125,6 @@ async function readLedgerForStatus(cwd: string, specId: string): Promise<ParsedL
   }
 
   return parsed as ParsedLedger;
-}
-
-/**
- * Reads the stored hash for `taskId` from `.waypoint/.gate-state/<specId>.json`,
- * or `null` if absent/unreadable/not a string — this module's own
- * self-contained equivalent of `verify.ts`'s unexported `readStoredHash`, per
- * this story's Boundaries & Constraints (a self-contained reader per module
- * is this codebase's established convention, not reaching into another
- * module's unexported internals).
- */
-async function readStoredHash(cwd: string, specId: string, taskId: string): Promise<string | null> {
-  const gateStatePath = path.join(cwd, '.waypoint', '.gate-state', `${specId}.json`);
-  try {
-    const raw = await readFile(gateStatePath, 'utf8');
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const value = parsed?.[taskId];
-    return typeof value === 'string' ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -294,6 +257,22 @@ export async function computeStatus(cwd: string): Promise<StatusResult> {
     // never reach `path.join` for either the ledger or `.gate-state` path —
     // treat it exactly like the existing [LEDGER ERROR] case (its task state
     // genuinely can't be determined) rather than building a path from it.
+    // `isPathUnsafeId` is `verify.ts`'s exported, shared denylist check (see
+    // its own doc comment for why this module deliberately reuses that
+    // *simpler* check rather than `update-spec.ts`/`approve.ts`'s stricter
+    // `SPEC_ID_SHAPE_PATTERN` allowlist: this module must keep working
+    // correctly for a legitimately-located Feature-tier spec with a
+    // non-standard-shaped id, which the stricter pattern would wrongly
+    // reject -- epic-1-5 MVP retrospective, Finding 12).
+    //
+    // This spec is folded into the same generic `tasks: 'ledger-error'`
+    // state used for an unreadable ledger, losing the more specific
+    // diagnostic `verify.ts` gives for the identical path-unsafe-id
+    // condition on its own CLI-argument path. Giving this its own distinct
+    // reason would require widening `SpecStatusEntry.tasks`'s union type
+    // (and the CLI rendering that switches on it) for a low-value cosmetic
+    // improvement -- left as-is deliberately rather than restructured
+    // (Finding 18).
     if (isPathUnsafeId(spec.id)) {
       entries.push({
         id: spec.id,

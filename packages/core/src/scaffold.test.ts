@@ -8,13 +8,14 @@ import {
   statSync,
   chmodSync,
   rmSync,
+  utimesSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { scaffold, ScaffoldConflictError } from './scaffold.js';
+import { acquireLock, scaffold, ScaffoldConflictError } from './scaffold.js';
 import { gate } from './gate.js';
 import { DEFAULT_PATCH_GLOBS } from './config-defaults.js';
 import { renderAgentsMd } from './templates/agents-md.js';
@@ -442,4 +443,51 @@ describe('scaffold — its own first commit passes the real installed gate hook 
     expect(gateResult.violations).toEqual([]);
     expect(gateResult.ok).toBe(true);
   }, 20000);
+});
+
+describe('scaffold — lock staleness is decoupled from lock wait timeout (epic-1-5 MVP retrospective, Batch 2 fix)', () => {
+  // `LOCK_STALE_MS` used to equal `LOCK_MAX_WAIT_MS` (5s): a waiter that
+  // timed out waiting for the lock would immediately conclude it was stale
+  // and forcibly reclaim it, even though a legitimate holder whose critical
+  // section takes as little as 5 seconds (now plausible for `update`/
+  // `approve`, which route their entire command bodies through this same
+  // lock via `verify.ts`'s `withSpecLock`) would still be genuinely working.
+  // These two tests prove the fix directly against the exported
+  // `acquireLock` primitive: a lock older than the 5s wait but younger than
+  // the new, much larger `LOCK_STALE_MS` (60s) must NOT be reclaimed, while
+  // one genuinely older than 60s still is.
+
+  it('does not reclaim a lock held past the 5s wait but under the 60s staleness threshold -- reports contention instead', async () => {
+    const lockDir = path.join(tmpDir, '.held.lock');
+    mkdirSync(lockDir);
+    // 10s old: past `LOCK_MAX_WAIT_MS` (5s) -- a waiter will time out -- but
+    // nowhere near `LOCK_STALE_MS` (60s) -- a legitimate holder plausibly
+    // still working, not abandoned.
+    const tenSecondsAgo = new Date(Date.now() - 10_000);
+    utimesSync(lockDir, tenSecondsAgo, tenSecondsAgo);
+
+    const acquired = await acquireLock(lockDir);
+
+    expect(acquired).toBe(false);
+    // The lock must survive untouched -- the still-running "holder" (this
+    // test's own pre-created directory, standing in for it) must not have
+    // been reaped out from under it just because a waiter's wait timed out.
+    expect(existsSync(lockDir)).toBe(true);
+  }, 8000);
+
+  it('does reclaim a lock genuinely older than the 60s staleness threshold, once the 5s wait also times out', async () => {
+    const lockDir = path.join(tmpDir, '.abandoned.lock');
+    mkdirSync(lockDir);
+    // 70s old: past both `LOCK_MAX_WAIT_MS` and `LOCK_STALE_MS` -- almost
+    // certainly abandoned by a crashed/killed process.
+    const seventySecondsAgo = new Date(Date.now() - 70_000);
+    utimesSync(lockDir, seventySecondsAgo, seventySecondsAgo);
+
+    const acquired = await acquireLock(lockDir);
+
+    expect(acquired).toBe(true);
+    // Reclaimed and re-acquired by this same call -- the directory exists
+    // again, freshly created and now held by this caller.
+    expect(existsSync(lockDir)).toBe(true);
+  }, 8000);
 });

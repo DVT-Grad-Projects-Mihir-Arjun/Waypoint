@@ -196,13 +196,30 @@ async function loadCheckCommand(repoRoot: string): Promise<LoadCheckCommandResul
   return { ok: true, checkCommand };
 }
 
-/** Resolves current `HEAD` via `git rev-parse HEAD`, never throwing. */
+/**
+ * Resolves current `HEAD` via `git rev-parse HEAD`, never throwing. Bounded
+ * with a `timeout` (matches `done-claim.ts`'s `gitStdio()`/`approve.ts`'s
+ * `resolveApprovedBy`, both established in later stories) so a hung or
+ * misbehaving git invocation can't block the calling process/CLI invocation
+ * indefinitely -- a general "don't let a git shell-out hang the whole
+ * command" guard, independent of any lock. `verifyTask`'s own call to this
+ * function runs strictly *before* `withSpecLock` is ever invoked (lock
+ * acquisition happens afterward), so a hang here blocks only the current
+ * process's own call; it cannot poison or hold the per-spec lock open, since
+ * the lock hasn't been acquired yet at this point. Contrast with the
+ * `gitStdio` git calls further down (`git add`/`commit --only`/rollback
+ * `reset`), which genuinely DO run inside `withSpecLock`'s critical section
+ * -- see that call site's own comment for why a hang *there* would actually
+ * hold the lock open (epic-1-5 MVP retrospective, Finding 10; this comment
+ * previously conflated the two).
+ */
 function resolveHead(repoRoot: string): { ok: true; sha: string } | { ok: false } {
   try {
     const sha = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 5_000,
     }).trim();
     return { ok: true, sha };
   } catch {
@@ -286,8 +303,17 @@ function hashableFieldsOf(task: LedgerTaskRow): {
   };
 }
 
-/** Reads the stored hash for `taskId` from `.waypoint/.gate-state/<spec-id>.json`, or `null` if absent/unreadable/not a string. */
-async function readStoredHash(repoRoot: string, specId: string, taskId: string): Promise<string | null> {
+/**
+ * Reads the stored hash for `taskId` from `.waypoint/.gate-state/<spec-id>.json`,
+ * or `null` if absent/unreadable/not a string.
+ *
+ * Exported so `status.ts` (Story 5.1) can reuse this exact reader instead of
+ * an independently-drifting byte-for-byte copy -- both modules need the
+ * identical read (this file's own `.gate-state` sidecar, keyed by task id),
+ * and only the surrounding ledger-parsing logic legitimately differs between
+ * them (epic-1-5 MVP retrospective, Finding 5).
+ */
+export async function readStoredHash(repoRoot: string, specId: string, taskId: string): Promise<string | null> {
   const gateStatePath = path.join(repoRoot, '.waypoint', GATE_STATE_DIRNAME, `${specId}.json`);
   try {
     const raw = await readFile(gateStatePath, 'utf8');
@@ -303,7 +329,7 @@ async function readStoredHash(repoRoot: string, specId: string, taskId: string):
  * Merges `hash` under `taskId` into `.waypoint/.gate-state/<spec-id>.json`
  * (read existing file if present, merge, write the whole object back) —
  * never a whole-file replace that would erase another task's stored hash.
- * Must only ever be called from inside `withVerifyLock`'s critical section —
+ * Must only ever be called from inside `withSpecLock`'s critical section —
  * it performs no locking of its own.
  */
 async function mergeGateStateHashLocked(
@@ -332,12 +358,31 @@ async function mergeGateStateHashLocked(
 }
 
 /**
+ * Thrown by `withSpecLock` when the per-spec lock can't be acquired within
+ * `LOCK_MAX_WAIT_MS` -- i.e. another `waypoint verify`/`update`/`approve` run
+ * on this exact spec is genuinely still in progress. A dedicated class
+ * (rather than a plain `Error`) so lock contention is recognizable via
+ * `instanceof` as its own first-class, expected outcome -- now that
+ * `update`/`approve` share this exact lock too, not just `verify`, every CLI
+ * wrapper that can hit it needs to give it that command's own framing
+ * instead of falling through to the generic catch-all.
+ */
+export class LockAcquisitionError extends Error {
+  constructor(specId: string) {
+    super(
+      `could not acquire the lock for spec '${specId}' in time -- another 'waypoint verify'/'update'/'approve' run on this spec may be in progress.`
+    );
+    this.name = 'LockAcquisitionError';
+  }
+}
+
+/**
  * Runs `fn` inside an exclusive, per-`specId` lock, guarding the *entire*
  * write-side critical section for that spec: re-reading the ledger, writing
  * it, committing it, and merging the new hash into `.gate-state` — not just
  * the final `.gate-state` write. This is what actually makes "concurrent
  * `verify` calls against the same or sibling tasks in one spec serialize
- * instead of corrupting the file" (this story's Boundaries & Constraints)
+ * instead of corrupting the file" (Story 3.3's Boundaries & Constraints)
  * true for the ledger too, not only for `.gate-state`: without locking the
  * whole section, a sibling call could read the ledger before another's write
  * landed and then clobber it on its own write.
@@ -345,17 +390,26 @@ async function mergeGateStateHashLocked(
  * Reuses `scaffold.ts`'s exported `acquireLock`/`releaseLock` mkdir-based
  * helpers, against a lock path distinct from (and never contending with)
  * `waypoint install`'s own `.waypoint/.install.lock`.
+ *
+ * Exported so `update-spec.ts`'s `updateSpec()` and `approve.ts`'s
+ * `approveSpec()` can contend on this *exact same* per-spec lock path
+ * (`.waypoint/.gate-state/.verify-<spec-id>.lock`) for their own
+ * read-then-write critical sections against the identical ledger and spec
+ * file `verifyTask` itself writes to. Before this, `update`/`approve` had no
+ * locking at all around either file, a real concurrent-write corruption risk
+ * against `verify`'s already-locked writes (epic-1-5 MVP retrospective,
+ * Findings 9 and 14) -- two independent locks (one per module) would not
+ * have actually serialized anything, since they'd never contend with each
+ * other for the same spec.
  */
-async function withVerifyLock<T>(repoRoot: string, specId: string, fn: () => Promise<T>): Promise<T> {
+export async function withSpecLock<T>(repoRoot: string, specId: string, fn: () => Promise<T>): Promise<T> {
   const gateStateDir = path.join(repoRoot, '.waypoint', GATE_STATE_DIRNAME);
   await mkdir(gateStateDir, { recursive: true });
 
   const lockDir = path.join(gateStateDir, `.verify-${specId}.lock`);
   const acquired = await acquireLock(lockDir);
   if (!acquired) {
-    throw new Error(
-      `could not acquire the verify lock for '${specId}' in time -- another 'waypoint verify' run may be in progress.`
-    );
+    throw new LockAcquisitionError(specId);
   }
 
   try {
@@ -375,7 +429,7 @@ async function withVerifyLock<T>(repoRoot: string, specId: string, fn: () => Pro
  * a no-op (`already-verified`); a missing or mismatched hash is `corrupted`
  * -- never silently re-verified or overwritten.
  *
- * Must only ever be called from inside `withVerifyLock`'s critical section --
+ * Must only ever be called from inside `withSpecLock`'s critical section --
  * it reads `.gate-state` (via `readStoredHash`), and that file is shared
  * across every task in the spec, so reading it outside the lock would race
  * with a sibling task's lock-protected write.
@@ -396,27 +450,80 @@ async function resolveAlreadyDone(
 }
 
 /**
- * Rejects `specId`/`taskId` values that could escape their intended
+ * Simple character-denylist path-safety check: `true` if `value` contains
+ * `/`, `\`, or `..` -- any of which could let a filesystem path built by
+ * simple template interpolation escape its intended directory.
+ *
+ * Exported so `status.ts` (Story 5.1) can reuse this exact check instead of
+ * an independently-drifting copy of its own (epic-1-5 MVP retrospective,
+ * Finding 12). Deliberately the *simpler* of this codebase's two path-safety
+ * styles -- `update-spec.ts`/`approve.ts`'s own `SPEC_ID_SHAPE_PATTERN` is a
+ * stricter allowlist those two modules need because their ids are also
+ * frontmatter-sourced *and* they build a ledger path for every tier they
+ * support. This simpler denylist is intentionally NOT merged with that
+ * stricter pattern: `status.ts` must keep working correctly for a
+ * legitimately-located Feature-tier spec whose id doesn't happen to match
+ * the strict `<tier>-<date>-<name>` shape, which the stricter pattern would
+ * wrongly reject.
+ */
+export function isPathUnsafeId(value: string): boolean {
+  return value.includes('/') || value.includes('\\') || value.includes('..');
+}
+
+/**
+ * Matches the shape every `create*Spec()` function actually generates
+ * (`patch-<date>-<name>`, `feat-<date>-<name>`, `system-<date>-<name>`) — the
+ * strict allowlist shared by every write-path command that enforces spec-id
+ * shape (`update-spec.ts`'s `updateSpec()` and `approve.ts`'s `approveSpec()`,
+ * both of which build a `tasks/<id>.ledger.yaml` path from the id and reject
+ * anything not matching this shape as `SpecNotFoundError` rather than risk a
+ * corrupted/adversarial id escaping the `tasks/` directory). A real spec's id
+ * can never fail this check.
+ *
+ * Exported here (rather than staying duplicated in both call sites) so
+ * `update-spec.ts` and `approve.ts` share one definition instead of two
+ * independently-drifting copies (epic-1-5 MVP retrospective, Finding 12 --
+ * this batch already unified `isPathUnsafeId` for the same reason but left
+ * this one duplicated until now).
+ *
+ * Deliberately NOT merged with `isPathUnsafeId` above, even though both are
+ * "spec-id path safety" checks: `isPathUnsafeId` is the simpler, looser
+ * denylist `status.ts` needs to keep working correctly for a legitimately-
+ * located Feature-tier spec whose id doesn't happen to match this stricter
+ * `<tier>-<date>-<name>` shape -- see `isPathUnsafeId`'s own doc comment for
+ * why that wider trust boundary must stay separate from this narrower one.
+ */
+export const SPEC_ID_SHAPE_PATTERN = /^(patch|feat|system)-\d{4}-\d{2}-\d{2}-[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+
+/**
+ * Rejects a path-unsafe `specId` before it's used to build this module's
  * filesystem locations (the task ledger path, the `.gate-state` path, and
- * the verify-lock directory name are all built directly from these two
- * strings) -- mirrors `new-spec.ts`'s `isValidName`/`InvalidSpecNameError`
- * guard on `waypoint new-patch`/`new-feature`/`new-system`'s `<name>`
- * argument, adapted to this module's result-returning (rather than
- * throwing) style. Returns a `not-found`-shaped `VerifyResult` -- the same
- * class of "the target doesn't resolve to something valid" as the existing
- * not-found cases -- for the first offending id, or `null` if both are safe.
+ * the verify-lock directory name are all built directly from `specId`) --
+ * mirrors `new-spec.ts`'s `isValidName`/`InvalidSpecNameError` guard on
+ * `waypoint new-patch`/`new-feature`/`new-system`'s `<name>` argument,
+ * adapted to this module's result-returning (rather than throwing) style.
+ *
+ * `taskId` is validated by the identical check too, even though -- unlike
+ * `specId` -- it is never actually used to build any path in this module:
+ * `taskId` is only ever compared against a ledger row's own `id` field, in
+ * memory, after the ledger has already been read via `specId`-derived paths.
+ * Rejecting a path-unsafe `taskId` up front is still worthwhile defense in
+ * depth (and gives a clear, on-brand `not-found` message instead of a
+ * confusing "no such task" for an obviously-malformed argument), but it is
+ * not a path-construction guard the way `specId`'s check is.
+ *
+ * Returns a `not-found`-shaped `VerifyResult` -- the same class of "the
+ * target doesn't resolve to something valid" as the existing not-found
+ * cases -- for the first offending id, or `null` if both are safe.
  */
 function validatePathSafeIds(specId: string, taskId: string): VerifyResult | null {
-  const isUnsafe = (value: string): boolean =>
-    value.includes('/') || value.includes('\\') || value.includes('..');
-
-  if (isUnsafe(specId)) {
+  if (isPathUnsafeId(specId)) {
     return {
       outcome: 'not-found',
       message: `invalid spec-id '${specId}': must not contain '/', '\\', or '..'.`,
     };
   }
-  if (isUnsafe(taskId)) {
+  if (isPathUnsafeId(taskId)) {
     return {
       outcome: 'not-found',
       message: `invalid task-id '${taskId}': must not contain '/', '\\', or '..'.`,
@@ -494,13 +601,13 @@ export async function verifyTask(repoRoot: string, specId: string, taskId: strin
   // Phase 1 (locked): every read of ledger/gate-state state must happen
   // under the lock, so this pre-check can't race a sibling task's
   // lock-protected write to the same shared `.gate-state/<spec-id>.json`.
-  const phase1 = await withVerifyLock(repoRoot, specId, async (): Promise<Phase1Outcome> => {
+  const phase1 = await withSpecLock(repoRoot, specId, async (): Promise<Phase1Outcome> => {
     const preCheck = await readLedgerFile(ledgerAbsPath);
     if (!preCheck) {
       return { proceed: false, result: ledgerNotFoundResult(specId) };
     }
 
-    const preCheckTask = preCheck.parsed.tasks.find((t) => t.id === taskId);
+    const preCheckTask = preCheck.parsed.tasks.find((t) => t && typeof t === 'object' && t.id === taskId);
     if (!preCheckTask) {
       return { proceed: false, result: taskNotFoundResult(specId, taskId) };
     }
@@ -536,13 +643,13 @@ export async function verifyTask(repoRoot: string, specId: string, taskId: strin
   // Phase 3 (locked): re-acquire the lock -- a separate acquisition from
   // phase 1's, not a re-entrant hold of the same one -- and re-read the
   // ledger fresh before writing.
-  return withVerifyLock(repoRoot, specId, async (): Promise<VerifyResult> => {
+  return withSpecLock(repoRoot, specId, async (): Promise<VerifyResult> => {
     const fresh = await readLedgerFile(ledgerAbsPath);
     if (!fresh) {
       return ledgerNotFoundResult(specId);
     }
 
-    const freshTask = fresh.parsed.tasks.find((t) => t.id === taskId);
+    const freshTask = fresh.parsed.tasks.find((t) => t && typeof t === 'object' && t.id === taskId);
     if (!freshTask) {
       return taskNotFoundResult(specId, taskId);
     }
@@ -566,10 +673,16 @@ export async function verifyTask(repoRoot: string, specId: string, taskId: strin
     // (e.g. via `git show --name-only`), corrupting the exact-string
     // comparisons this module's callers rely on.
     const relLedgerPath = ledgerRelativePath(specId);
-    const gitStdio: { cwd: string; encoding: 'utf8'; stdio: ['pipe', 'pipe', 'pipe'] } = {
+    // `timeout` bounds every git call below (add/commit/reset) -- these run
+    // inside `withSpecLock`'s critical section, so a hang here would
+    // otherwise poison every future command contending on this same
+    // per-spec lock, not just this one call (epic-1-5 MVP retrospective,
+    // Finding 10). Matches `done-claim.ts`'s `gitStdio()` value.
+    const gitStdio: { cwd: string; encoding: 'utf8'; stdio: ['pipe', 'pipe', 'pipe']; timeout: number } = {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 5_000,
     };
 
     try {

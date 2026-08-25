@@ -10,9 +10,11 @@ import {
   NoPhaseTrackedTasksError,
   PatchTierApprovalNotSupportedError,
 } from './approve.js';
+import type { ApproveResult } from './approve.js';
 import { createFeatureSpec, createSystemSpec } from './new-spec.js';
 import { scaffold } from './scaffold.js';
 import { DuplicateSpecIdError, LedgerNotFoundError, SpecNotFoundError } from './update-spec.js';
+import { verifyTask } from './verify.js';
 
 let tmpDir: string;
 
@@ -449,11 +451,11 @@ describe('approveSpec — System tier, a new phase appears after status is alrea
 });
 
 // -- Cross-cutting: corrupted spec-id shape is treated as not found ---------
-// (System tier only -- System tier builds a `tasks/<id>.ledger.yaml` path
-// directly from the id, so a corrupted/adversarial id must never escape
-// `tasks/`. Feature tier never builds a filesystem path from the id, so the
-// same guard must NOT reject a legitimately-located Feature spec whose id
-// simply doesn't match the usual shape -- see the next describe block.)
+// (Applied uniformly to both System and Feature tier -- see the epic-1-5 MVP
+// retrospective's Finding 11: `update-spec.ts`'s own Feature-tier sync pass
+// also builds a `tasks/<id>.ledger.yaml` path from the id, so a
+// malformed-shaped Feature-tier id used to `approve` successfully and then
+// fail `update` for the identical id. Both modules now agree.)
 
 describe('approveSpec — System tier, corrupted spec-id shape is treated as not found', () => {
   it('rejects with SpecNotFoundError when the matched frontmatter id does not have the <tier>-<date>-<name> shape', async () => {
@@ -477,10 +479,8 @@ describe('approveSpec — System tier, corrupted spec-id shape is treated as not
   });
 });
 
-// -- Cross-cutting: Feature tier never applies the id-shape guard -----------
-
-describe('approveSpec — Feature tier, a non-standard-shaped id is still approved', () => {
-  it('approves a legitimately-located Feature spec whose id does not match the <tier>-<date>-<name> shape, since Feature tier never builds a filesystem path from it', async () => {
+describe('approveSpec — Feature tier, corrupted spec-id shape is treated as not found', () => {
+  it('rejects with SpecNotFoundError when a legitimately-located Feature spec id does not match the <tier>-<date>-<name> shape, consistently with update-spec.ts', async () => {
     const weirdPath = path.join(tmpDir, 'specs', 'features', 'weird-id.md');
     const weirdId = 'hand-edited-id-without-the-usual-shape';
     writeFileSync(
@@ -488,13 +488,16 @@ describe('approveSpec — Feature tier, a non-standard-shaped id is still approv
       `---\nid: ${weirdId}\ntier: feature\nstatus: draft\napproved_by: null\napproved_at: null\ncreated_at: 2026-08-21\n---\n\n# weird-id\n\n## Task List\n\n- [ ] t1: placeholder\n`
     );
 
-    const result = await approveSpec(tmpDir, weirdId);
+    let caught: unknown;
+    try {
+      await approveSpec(tmpDir, weirdId);
+    } catch (err) {
+      caught = err;
+    }
 
-    expect(result.outcome).toBe('approved');
-    expect(result.id).toBe(weirdId);
-
-    const frontmatter = readFrontmatter(weirdPath);
-    expect(frontmatter.status).toBe('approved');
+    expect(caught).toBeInstanceOf(SpecNotFoundError);
+    expect((caught as SpecNotFoundError).specId).toBe(weirdId);
+    expect(readFileSync(weirdPath, 'utf8')).toContain('status: draft');
   });
 });
 
@@ -553,5 +556,114 @@ describe('approveSpec — no overclaimed enforcement in its own output', () => {
     // itself checks or blocks.
     expect(Object.keys(result)).not.toContain('agentBlocked');
     expect(Object.keys(result)).not.toContain('enforced');
+  });
+});
+
+// -- Findings 9 & 14 regression (epic-1-5 MVP retrospective, Batch 2) -------
+//
+// `approveSpec()` used to have no locking at all around its own read of the
+// spec file (and, for System tier, the ledger's distinct phases), unlike
+// `verify.ts`'s `verifyTask()`, which already locks its own read-then-write
+// critical section against the identical ledger via `withSpecLock`. This
+// suite mirrors `update-spec.test.ts`'s own "Finding 9 regression: serializes
+// against a concurrent verifyTask" test to prove the fix: `approveSpec()` now
+// contends on the *same* per-spec lock path `verifyTask()` already uses, so a
+// concurrent `approveSpec()`/`verifyTask()` pair against the same spec
+// serializes instead of racing.
+
+describe('approveSpec — Findings 9 & 14 regression: serializes against a concurrent verifyTask on the same spec', () => {
+  it('a concurrent approveSpec() (approving phase 1) and verifyTask() (completing the phase-1 task) both land -- neither outcome is lost or corrupted', async () => {
+    initGitRepo(tmpDir);
+
+    const created = await createSystemSpec(tmpDir, 'billing-platform');
+
+    // `check_command` defaults to `npm test`, which this scratch repo has no
+    // package.json for -- override to something trivially successful so this
+    // test isolates the locking question, not check_command itself.
+    const configPath = path.join(tmpDir, '.waypoint', 'config.yaml');
+    writeFileSync(
+      configPath,
+      readFileSync(configPath, 'utf8').replace('check_command: npm test', 'check_command: "true"')
+    );
+
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    const [approveResult, verifyResult] = await Promise.all([
+      approveSpec(tmpDir, created.id),
+      verifyTask(tmpDir, created.id, 't1'),
+    ]);
+
+    // approveSpec's write survived: phase 1 (the only phase eligible at the
+    // time both calls started) is approved; the spec has a second phase
+    // (t2/phase 2) still pending, so status correctly stays 'draft'.
+    expect(approveResult.outcome).toBe('approved');
+    expect(approveResult.tier).toBe('system');
+    expect(approveResult.approvedPhase).toBe(1);
+    expect(approveResult.statusApproved).toBe(false);
+
+    // verifyTask's write also survived: t1 is genuinely done.
+    expect(verifyResult.outcome).toBe('verified');
+
+    const frontmatter = readFrontmatter(created.prdPath);
+    expect(frontmatter.status).toBe('draft');
+    const approvals = frontmatter.phase_approvals as Array<Record<string, unknown>>;
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]!.phase).toBe(1);
+
+    const ledger = parse(readFileSync(created.ledgerPath, 'utf8')) as {
+      tasks: Array<Record<string, unknown>>;
+    };
+    const t1 = ledger.tasks.find((t) => t.id === 't1');
+    expect(t1).toBeDefined();
+    expect(t1!.status).toBe('done');
+    expect(t1!.verified_by_gate).toBe(true);
+
+    // t2 (phase 2) is untouched by either concurrent call.
+    const t2 = ledger.tasks.find((t) => t.id === 't2');
+    expect(t2).toBeDefined();
+    expect(t2!.status).toBe('pending');
+
+    // Exactly two ledger rows total -- no duplication from a racing re-read.
+    expect(ledger.tasks).toHaveLength(2);
+  }, 10000);
+});
+
+// -- Fix 9(c) regression (epic-1-5 MVP retrospective, Batch 2) --------------
+//
+// `readLedgerDistinctPhases`'s phase-collecting loop guards against a
+// `null`/non-object task row the same way `status.ts`/`done-claim.ts` already
+// do for the identical malformed-row possibility -- this proves it actually
+// works end to end through `approveSpec()`, not just in isolation.
+
+describe('approveSpec — System tier, null ledger row mixed with valid phase-tagged rows', () => {
+  it('ignores a null task row instead of throwing, and still approves the lowest remaining real phase', async () => {
+    const created = await createSystemSpec(tmpDir, 'billing-platform');
+
+    writeFileSync(
+      created.ledgerPath,
+      stringify({
+        spec_id: created.id,
+        tasks: [
+          null,
+          { id: 't1', phase: 1, description: 'p1', status: 'pending', linked_commit: null, verified_by_gate: false },
+          { id: 't2', phase: 2, description: 'p2', status: 'pending', linked_commit: null, verified_by_gate: false },
+        ],
+      })
+    );
+
+    let caught: unknown;
+    let result: ApproveResult | undefined;
+    try {
+      result = await approveSpec(tmpDir, created.id);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeUndefined();
+    expect(result).toBeDefined();
+    expect(result!.outcome).toBe('approved');
+    expect(result!.approvedPhase).toBe(1);
+    expect(result!.statusApproved).toBe(false);
   });
 });

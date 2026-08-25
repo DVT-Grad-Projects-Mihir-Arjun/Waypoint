@@ -316,8 +316,15 @@ describe('checkDoneClaims — malformed ledger', () => {
   });
 });
 
-describe('checkDoneClaims — nested tasks/ layout', () => {
-  it('finds a *.ledger.yaml file nested under a subdirectory of tasks/', async () => {
+describe('checkDoneClaims — flat tasks/ layout only (nested support removed)', () => {
+  it('never descends into a subdirectory of tasks/ — a ledger nested one level down is not found', async () => {
+    // `collectLedgerFiles` used to recurse into subdirectories, but no other
+    // ledger consumer (`update-spec.ts`, `approve.ts`, `status.ts`) or any
+    // real scaffolding code ever produces or expects a nested layout — that
+    // was speculative generality with no current producer (epic-1-5 MVP
+    // retrospective, Finding 17). This test locks in the corrected, flat-only
+    // scan: a nested ledger is silently invisible to this check, exactly as
+    // it already is to every other command.
     initGitRepo(tmpDir);
     commitAll(tmpDir, 'init');
     const initialSha = headSha(tmpDir);
@@ -329,6 +336,27 @@ describe('checkDoneClaims — nested tasks/ layout', () => {
     const result = await checkDoneClaims(tmpDir);
 
     expect(result).toEqual({ ok: true, violations: [] });
+  });
+
+  it('finds a ledger placed directly under tasks/ but not one nested a level deeper, in the same run', async () => {
+    initGitRepo(tmpDir);
+    commitAll(tmpDir, 'init');
+
+    const fabricated = 'deadbeef'.repeat(5); // 40 hex chars, never a real object in this repo
+    writeLedger(tmpDir, 'tasks/feat-flat.ledger.yaml', [
+      { id: 't1', description: 'a task', status: 'done', linked_commit: fabricated },
+    ]);
+    writeLedger(tmpDir, 'tasks/nested/feat-nested.ledger.yaml', [
+      { id: 't1', description: 'a task', status: 'done', linked_commit: fabricated },
+    ]);
+
+    const result = await checkDoneClaims(tmpDir);
+
+    // Only the flat ledger's violation is reported -- the nested one is
+    // never walked into at all.
+    expect(result.ok).toBe(false);
+    expect(result.violations).toHaveLength(1);
+    expect(result.violations[0]!.ledgerFile).toBe('tasks/feat-flat.ledger.yaml');
   });
 });
 
@@ -446,4 +474,53 @@ describe('checkDoneClaims — Acceptance Criteria: perf budget for the combined 
     },
     90_000
   );
+});
+
+// -- Fix 9(b) regression (epic-1-5 MVP retrospective, Batch 2) --------------
+//
+// `COMMIT_HASH_PATTERN` was tightened this batch from `/^[0-9a-f]{4,40}$/i`
+// (any abbreviated hash from 4 characters up) to `/^[0-9a-f]{40}$/i` (exactly
+// a full 40-character hex SHA, the only shape `waypoint verify` ever
+// actually writes). This proves the boundary: a full 40-character hash is
+// still accepted, and a 39-character hash -- previously accepted -- is now
+// correctly rejected.
+
+describe('checkDoneClaims — COMMIT_HASH_PATTERN boundary (tightened from {4,40} to exactly 40)', () => {
+  it('accepts a full 40-character hex linked_commit that is a real ancestor of HEAD', async () => {
+    initGitRepo(tmpDir);
+    commitAll(tmpDir, 'init');
+    const sha = headSha(tmpDir);
+    expect(sha).toHaveLength(40);
+
+    writeLedger(tmpDir, 'tasks/feat-demo.ledger.yaml', [
+      { id: 't1', description: 'a task', status: 'done', linked_commit: sha, verified_by_gate: true },
+    ]);
+
+    const result = await checkDoneClaims(tmpDir);
+
+    expect(result).toEqual({ ok: true, violations: [] });
+  });
+
+  it('rejects a 39-character (abbreviated) linked_commit that the previous, looser {4,40} pattern used to accept', async () => {
+    initGitRepo(tmpDir);
+    commitAll(tmpDir, 'init');
+    const sha = headSha(tmpDir);
+    const abbreviated = sha.slice(0, 39);
+    expect(abbreviated).toHaveLength(39);
+
+    writeLedger(tmpDir, 'tasks/feat-demo.ledger.yaml', [
+      { id: 't1', description: 'a task', status: 'done', linked_commit: abbreviated, verified_by_gate: true },
+    ]);
+
+    const result = await checkDoneClaims(tmpDir);
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toHaveLength(1);
+    expect(result.violations[0]).toMatchObject({
+      ledgerFile: 'tasks/feat-demo.ledger.yaml',
+      taskId: 't1',
+    });
+    expect(result.violations[0]!.reason).toContain('not a valid commit hash');
+    expect(result.violations[0]!.reason).toContain(abbreviated);
+  });
 });

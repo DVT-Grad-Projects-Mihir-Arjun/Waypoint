@@ -2,6 +2,7 @@ import path from 'node:path';
 import {
   DuplicateSpecIdError,
   LedgerNotFoundError,
+  LockAcquisitionError,
   PatchTierUpdateNotSupportedError,
   SpecNotFoundError,
   updateSpec,
@@ -34,7 +35,8 @@ export async function updateCommand(specId: string, cwd: string = process.cwd())
       err instanceof SpecNotFoundError ||
       err instanceof PatchTierUpdateNotSupportedError ||
       err instanceof DuplicateSpecIdError ||
-      err instanceof LedgerNotFoundError
+      err instanceof LedgerNotFoundError ||
+      err instanceof LockAcquisitionError
     ) {
       console.error(`waypoint update: ${err.message}`);
       process.exitCode = 1;

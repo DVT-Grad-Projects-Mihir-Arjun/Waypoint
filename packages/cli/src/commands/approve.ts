@@ -3,6 +3,7 @@ import {
   DuplicateSpecIdError,
   FrontmatterFieldNotFoundError,
   LedgerNotFoundError,
+  LockAcquisitionError,
   NoPhaseTrackedTasksError,
   PatchTierApprovalNotSupportedError,
   SpecNotFoundError,
@@ -37,7 +38,8 @@ export async function approveCommand(specId: string, cwd: string = process.cwd()
       err instanceof DuplicateSpecIdError ||
       err instanceof LedgerNotFoundError ||
       err instanceof NoPhaseTrackedTasksError ||
-      err instanceof FrontmatterFieldNotFoundError
+      err instanceof FrontmatterFieldNotFoundError ||
+      err instanceof LockAcquisitionError
     ) {
       console.error(`waypoint approve: ${err.message}`);
       process.exitCode = 1;

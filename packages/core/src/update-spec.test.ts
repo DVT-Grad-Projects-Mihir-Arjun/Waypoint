@@ -1,11 +1,13 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 import { approveSpec } from './approve.js';
 import { createFeatureSpec, createSystemSpec } from './new-spec.js';
 import { scaffold } from './scaffold.js';
+import { PLACEHOLDER_TASK_DESCRIPTION } from './templates/feature.js';
 import {
   DuplicateSpecIdError,
   findSpecById,
@@ -14,6 +16,8 @@ import {
   SpecNotFoundError,
   updateSpec,
 } from './update-spec.js';
+import type { UpdateSpecResult } from './update-spec.js';
+import { verifyTask } from './verify.js';
 
 let tmpDir: string;
 
@@ -711,5 +715,223 @@ describe('updateSpec — broadened delta-heading dash recognition', () => {
     // ...and the hyphen-heading itself was recognized as non-empty, so a
     // fresh (canonical em-dash) heading was appended rather than reused.
     expect(second.deltaHeadingReused).toBe(false);
+  });
+});
+
+// -- Finding 9 regression (epic-1-5 MVP retrospective) -----------------------
+//
+// `updateSpec()` used to read-then-write the ledger (and the spec file) with
+// no locking at all, unlike `verify.ts`'s `verifyTask()`, which already locks
+// its own read-then-write critical section against the identical ledger file
+// via `withSpecLock`. That meant `waypoint update` running concurrently with
+// `waypoint verify` (or a second `waypoint update`) on the same spec could
+// read a stale ledger and overwrite the other's in-flight write, silently
+// dropping a newly-verified task's completion or a newly-synced row. This
+// suite mirrors `verify.test.ts`'s own "concurrent verify, same/sibling
+// tasks" test structure to prove the fix: `updateSpec()` now contends on the
+// *same* per-spec lock path `verifyTask()` already uses, so the two calls
+// serialize instead of corrupting the ledger.
+
+function git(args: string[], cwd: string): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+}
+
+function initGitRepo(cwd: string): void {
+  git(['init', '-q'], cwd);
+  git(['config', 'user.email', 'test@example.com'], cwd);
+  git(['config', 'user.name', 'Test'], cwd);
+}
+
+describe('updateSpec — Finding 9 regression: serializes against a concurrent verifyTask on the same spec', () => {
+  beforeEach(async () => {
+    await scaffold(tmpDir);
+  });
+
+  it('a concurrent updateSpec() (syncing a new task) and verifyTask() (completing an existing task) both land -- neither write is lost', async () => {
+    // `scaffold()` already ran (in this describe's own beforeEach) before
+    // `git init` below, so no real pre-commit hook is installed (avoiding
+    // the `npx waypoint gate` dependency verify.test.ts's own fixtures also
+    // avoid) -- this test only needs a real repo for `verifyTask`'s git
+    // plumbing, not the hook.
+    initGitRepo(tmpDir);
+
+    const created = await createFeatureSpec(tmpDir, 'auth-refresh');
+
+    // `check_command` defaults to `npm test`, which this scratch repo has no
+    // package.json for -- override to something trivially successful so
+    // this test isolates the locking question, not check_command itself.
+    const configPath = path.join(tmpDir, '.waypoint', 'config.yaml');
+    writeFileSync(
+      configPath,
+      readFileSync(configPath, 'utf8').replace('check_command: npm test', 'check_command: "true"')
+    );
+
+    // Scaffold the first Delta heading, then hand-fill it with a bullet not
+    // yet synced into the ledger -- the concurrent `updateSpec()` call below
+    // will pick this up.
+    const scaffolded = await updateSpec(tmpDir, created.id);
+    let raw = readFileSync(created.path, 'utf8');
+    raw = raw.replace(
+      `${scaffolded.deltaHeading}\n\n### ADDED\n`,
+      `${scaffolded.deltaHeading}\n\n### ADDED\n- Add logout endpoint\n`
+    );
+    writeFileSync(created.path, raw, 'utf8');
+
+    git(['add', '-A'], tmpDir);
+    git(['commit', '-m', 'init'], tmpDir);
+
+    const [updateResult, verifyResult] = await Promise.all([
+      updateSpec(tmpDir, created.id),
+      verifyTask(tmpDir, created.id, 't1'),
+    ]);
+
+    expect(updateResult.syncedTaskIds).toHaveLength(1);
+    expect(verifyResult.outcome).toBe('verified');
+
+    const ledger = parse(readFileSync(created.ledgerPath, 'utf8')) as {
+      tasks: Array<Record<string, unknown>>;
+    };
+
+    // verifyTask's write survived: t1 is genuinely done.
+    const t1 = ledger.tasks.find((t) => t.id === 't1');
+    expect(t1).toBeDefined();
+    expect(t1!.status).toBe('done');
+    expect(t1!.verified_by_gate).toBe(true);
+
+    // updateSpec's write also survived: the newly-synced row is present,
+    // not silently dropped by a lost update from the other call's write.
+    const newTaskId = updateResult.syncedTaskIds[0]!;
+    const newRow = ledger.tasks.find((t) => t.id === newTaskId);
+    expect(newRow).toBeDefined();
+    expect(newRow!.description).toBe('Add logout endpoint');
+    expect(newRow!.status).toBe('pending');
+
+    // Exactly two ledger rows total -- neither call's write clobbered the
+    // other's, and nothing was duplicated by a racing re-read either.
+    expect(ledger.tasks).toHaveLength(2);
+  }, 10000);
+
+  it('two concurrent updateSpec() calls syncing distinct bullets both land, with no lost update or duplicate sync', async () => {
+    const created = await createFeatureSpec(tmpDir, 'auth-refresh');
+
+    const scaffolded = await updateSpec(tmpDir, created.id);
+    let raw = readFileSync(created.path, 'utf8');
+    raw = raw.replace(
+      `${scaffolded.deltaHeading}\n\n### ADDED\n`,
+      `${scaffolded.deltaHeading}\n\n### ADDED\n- Add logout endpoint\n- Add password-reset endpoint\n`
+    );
+    writeFileSync(created.path, raw, 'utf8');
+
+    const [first, second] = await Promise.all([
+      updateSpec(tmpDir, created.id),
+      updateSpec(tmpDir, created.id),
+    ]);
+
+    // Serialized by the lock: the two ADDED bullets are synced exactly once
+    // in total across both calls, never duplicated (a lost-update race could
+    // otherwise cause both calls to independently believe neither bullet had
+    // been synced yet) and never dropped.
+    const totalSynced = first.syncedTaskIds.length + second.syncedTaskIds.length;
+    expect(totalSynced).toBe(2);
+
+    const ledger = parse(readFileSync(created.ledgerPath, 'utf8')) as {
+      tasks: Array<Record<string, unknown>>;
+    };
+    // t1 (the original scaffolded placeholder task) + the two newly-synced
+    // rows, no duplicates.
+    expect(ledger.tasks).toHaveLength(3);
+    const descriptions = ledger.tasks.map((t) => t.description);
+    expect(descriptions).toContain('Add logout endpoint');
+    expect(descriptions).toContain('Add password-reset endpoint');
+  });
+});
+
+// -- Fix 9(c) regression (epic-1-5 MVP retrospective, Batch 2) --------------
+//
+// `maxTaskNumber`'s guard and the `existingDescriptions` guard (including
+// this same patch round's Fix 3, requiring `typeof t.description ===
+// 'string'`) must both tolerate a `null`/non-object task row mixed in
+// alongside otherwise-valid rows, the same way `status.ts`/`done-claim.ts`
+// already do for the identical malformed-row possibility.
+
+describe('updateSpec — null ledger row mixed with valid rows', () => {
+  beforeEach(async () => {
+    await scaffold(tmpDir);
+  });
+
+  it('ignores a null task row and a non-string-description row instead of throwing, still skips a duplicate description and assigns the correct next task id', async () => {
+    const created = await createFeatureSpec(tmpDir, 'auth-refresh');
+
+    // Corrupt the ledger with a null row (a plausible hand-edit mistake, e.g.
+    // a stray blank list item) and a valid-object-but-non-string-description
+    // row (Fix 3: `description` missing/`null`/a number) mixed in alongside
+    // the real t1 placeholder row.
+    writeFileSync(
+      created.ledgerPath,
+      stringify({
+        spec_id: created.id,
+        tasks: [
+          null,
+          { id: 't0', description: null, status: 'pending', linked_commit: null, verified_by_gate: false },
+          {
+            id: 't1',
+            description: PLACEHOLDER_TASK_DESCRIPTION,
+            status: 'pending',
+            linked_commit: null,
+            verified_by_gate: false,
+          },
+        ],
+      })
+    );
+
+    const scaffolded = await updateSpec(tmpDir, created.id);
+    expect(scaffolded.syncedTaskIds).toEqual([]);
+
+    // Hand-fill the ADDED section: one bullet that exactly duplicates t1's
+    // existing description (must be skipped, not re-synced -- proves
+    // `existingDescriptions` still works correctly with the null row
+    // present), and one genuinely new bullet (must be synced).
+    let raw = readFileSync(created.path, 'utf8');
+    raw = raw.replace(
+      `${scaffolded.deltaHeading}\n\n### ADDED\n`,
+      `${scaffolded.deltaHeading}\n\n### ADDED\n- ${PLACEHOLDER_TASK_DESCRIPTION}\n- Add logout endpoint\n`
+    );
+    writeFileSync(created.path, raw, 'utf8');
+
+    let caught: unknown;
+    let result: UpdateSpecResult | undefined;
+    try {
+      result = await updateSpec(tmpDir, created.id);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeUndefined();
+    expect(result).toBeDefined();
+    // Only the genuinely-new bullet was synced -- the duplicate-of-t1 bullet
+    // was correctly skipped despite the null row sitting ahead of t1 in the
+    // array.
+    expect(result!.syncedTaskIds).toHaveLength(1);
+
+    const ledger = parse(readFileSync(created.ledgerPath, 'utf8')) as {
+      tasks: Array<Record<string, unknown> | null>;
+    };
+    const newTaskId = result!.syncedTaskIds[0]!;
+    // `maxTaskNumber` correctly ignored the null row and computed the next
+    // id from t1 alone -- t2, not some id derived from miscounting the null
+    // row (e.g. treating it as a phantom task and skipping to t3).
+    expect(newTaskId).toBe('t2');
+
+    const newRow = ledger.tasks.find(
+      (t) => t !== null && typeof t === 'object' && (t as Record<string, unknown>).id === newTaskId
+    ) as Record<string, unknown> | undefined;
+    expect(newRow).toBeDefined();
+    expect(newRow!.description).toBe('Add logout endpoint');
+
+    // Both malformed rows are preserved as-is (never crashed on, never
+    // silently dropped/rewritten) -- exactly 4 entries: null, t0, t1, t2.
+    expect(ledger.tasks).toHaveLength(4);
+    expect(ledger.tasks[0]).toBeNull();
+    expect((ledger.tasks[1] as Record<string, unknown>).id).toBe('t0');
   });
 });

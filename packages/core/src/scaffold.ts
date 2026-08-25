@@ -137,10 +137,28 @@ function checkConflict(absPath: string, kind: 'dir' | 'file'): void {
 const LOCK_RETRY_INTERVAL_MS = 50;
 const LOCK_MAX_WAIT_MS = 5000;
 // A lock older than this is assumed abandoned by a crashed/killed process
-// rather than held by a genuinely running install. Reuses LOCK_MAX_WAIT_MS:
-// if we're about to give up waiting anyway, it's also old enough to be
-// considered stale.
-const LOCK_STALE_MS = LOCK_MAX_WAIT_MS;
+// rather than held by a genuinely running install. It used to be safe to
+// reuse LOCK_MAX_WAIT_MS here, back when this lock only ever guarded
+// scaffold()'s single mkdir and verify.ts's own narrow per-phase critical
+// sections -- both comfortably finish well under 5 seconds, so "we're about
+// to give up waiting anyway" really did imply "and it's abandoned." That
+// stopped being true once update-spec.ts's updateSpec() and approve.ts's
+// approveFeatureSpec()/approveSystemSpec() started routing their *entire*
+// command bodies through this same lock via verify.ts's withSpecLock (full
+// spec-file read+parse+write, ledger read+write, git calls): a legitimate
+// holder can plausibly still be working past 5 seconds on a slow disk, a
+// loaded CI runner, or just several sequential git calls each with their own
+// timeout. Reusing LOCK_MAX_WAIT_MS would make every such waiter conclude the
+// lock is stale, forcibly remove it, and acquire it itself while the
+// original holder is still inside its own critical section -- two processes
+// then both believe they exclusively hold the same lock, reintroducing the
+// exact concurrent-write corruption this locking mechanism exists to
+// prevent. Decoupled to a much more generous, independent margin instead, so
+// a waiter that times out at LOCK_MAX_WAIT_MS does NOT treat the lock as
+// stale unless it has genuinely been held for LOCK_STALE_MS+ -- almost
+// certainly abandoned by a crashed/killed process, not still-running work
+// (epic-1-5 MVP retrospective, Batch 2 adversarial review).
+const LOCK_STALE_MS = 60_000;
 
 /** True if `lockDir`'s mtime is old enough to be considered abandoned. */
 async function isLockStale(lockDir: string): Promise<boolean> {
@@ -161,10 +179,13 @@ async function isLockStale(lockDir: string): Promise<boolean> {
  * Notes: no distributed lock needed, just enough to serialize two local
  * `waypoint install` invocations.
  *
- * If the wait times out, checks whether the lock is stale (left behind by a
- * crashed/killed process) before giving up — a stale lock is reclaimed and
- * acquisition is retried once, instead of permanently blocking every future
- * `waypoint install` in this repo.
+ * If the wait times out, checks whether the lock is *independently* old
+ * enough to be considered stale (its own `LOCK_STALE_MS` threshold, deliberately
+ * decoupled from `LOCK_MAX_WAIT_MS` — see that constant's own doc comment for
+ * why) before giving up — timing out on the wait does not by itself imply the
+ * lock is abandoned; only a lock genuinely older than `LOCK_STALE_MS` is
+ * reclaimed, and acquisition is retried once, instead of permanently blocking
+ * every future `waypoint install` in this repo.
  *
  * Exported so `verify.ts` (Story 3.3) can reuse this exact mechanism against
  * its own, distinct lock path (`.waypoint/.gate-state/.verify-<spec-id>.lock`)
