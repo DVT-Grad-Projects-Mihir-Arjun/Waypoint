@@ -19,8 +19,8 @@ Findings from code review that are real but out of scope for their source story 
   evidence: Confirmed by reading `.gitignore` — the entry is `/node_modules/` (leading slash, root-anchored), not the common recursive `node_modules/` pattern; not a problem under the current npm-workspaces setup, but a latent gap if the tooling ever changes.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-install-scaffolds-the-repo-structure.md`
-  summary: The Waypoint monorepo itself has no root `README.md` or `LICENSE` file.
-  evidence: Outside Story 1.1's scope (which scaffolds a *consuming* repo's structure, not this repo's own documentation), but a real gap before any public distribution of the `waypoint` package.
+  summary: The Waypoint monorepo itself has no root `LICENSE` file.
+  evidence: Outside Story 1.1's scope (which scaffolds a *consuming* repo's structure, not this repo's own documentation), but a real gap before any public distribution of the `waypoint` package. (The matching `README.md` gap this entry originally also flagged was closed separately, post-MVP-retrospective — see the root `README.md`.)
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-install-scaffolds-the-repo-structure.md`
   summary: `checkConflict` in `packages/core/src/scaffold.ts` follows symlinks via `statSync` without special-casing them, so a scaffolded path that is a symlink to a directory elsewhere (including outside the repo) is silently accepted and written through rather than flagged as an unusual pre-existing state.
