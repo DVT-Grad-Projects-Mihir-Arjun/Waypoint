@@ -1,0 +1,352 @@
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { chmod, mkdir, rm, stat as fsStat, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { renderConfigYaml } from './config-defaults.js';
+import { ensureGitignoreEntry } from './gitignore.js';
+import { renderAgentsMd } from './templates/agents-md.js';
+import {
+  renderPlannerPrompt,
+  renderArchitectPrompt,
+  renderImplementerPrompt,
+  renderReviewerPrompt,
+} from './templates/roles.js';
+
+/**
+ * Result of a `scaffold()` run.
+ *
+ * `skipped-lock-contention` means another `waypoint install` was already
+ * holding the install lock when this run's wait timed out — a safe no-op,
+ * per the concurrency design in the story's Design Notes.
+ */
+export interface ScaffoldResult {
+  status: 'installed' | 'skipped-lock-contention';
+  createdPaths: string[];
+  preservedPaths: string[];
+  /**
+   * Non-fatal, worth-surfacing notices — e.g. a hook file that was skipped
+   * because `.git` is missing/not a plain directory, or a foreign
+   * pre-existing hook that was preserved untouched instead of being
+   * overwritten. Empty when nothing needed flagging. Additive to the
+   * existing shape: both already-shipped consumers only read
+   * `createdPaths`/`preservedPaths`/`status`.
+   */
+  warnings: string[];
+}
+
+/**
+ * Thrown when a scaffolded path already exists with the wrong kind of entry
+ * (e.g. a plain file where a directory is expected). Callers should report
+ * `error.message` and exit non-zero, never let a raw filesystem error
+ * (ENOTDIR, EEXIST, ...) surface directly.
+ */
+export class ScaffoldConflictError extends Error {
+  readonly conflictingPath: string;
+
+  constructor(conflictingPath: string, expectedKind: 'directory' | 'file') {
+    const isDirExpected = expectedKind === 'directory';
+    const found = isDirExpected ? 'a file' : 'a directory';
+    super(
+      `waypoint install: '${conflictingPath}' already exists as ${found}, but a ${expectedKind} is expected there. Remove or rename it, then re-run 'waypoint install'.`
+    );
+    this.name = 'ScaffoldConflictError';
+    this.conflictingPath = conflictingPath;
+  }
+}
+
+const ROLE_NAMES = ['planner', 'architect', 'implementer', 'reviewer'] as const;
+
+/** Both git hooks Story 3.2 needs installed so the gate actually runs. */
+const HOOK_NAMES = ['pre-commit', 'pre-merge-commit'] as const;
+
+/**
+ * The marker comment line is also the idempotency signal: a hook file
+ * containing this line is recognized as Waypoint's own on re-install; one
+ * without it is treated as a foreign, pre-existing hook and never
+ * overwritten.
+ */
+const HOOK_MARKER = '# Installed by waypoint install — do not edit directly.';
+
+const HOOK_SCRIPT_CONTENT = `#!/bin/sh\n${HOOK_MARKER}\nexec npx waypoint gate\n`;
+
+/** One render function per role, keyed by its `ROLE_NAMES` entry. */
+const ROLE_RENDERERS: Record<(typeof ROLE_NAMES)[number], () => string> = {
+  planner: renderPlannerPrompt,
+  architect: renderArchitectPrompt,
+  implementer: renderImplementerPrompt,
+  reviewer: renderReviewerPrompt,
+};
+
+interface DirEntry {
+  kind: 'dir';
+  relPath: string;
+}
+
+interface FileEntry {
+  kind: 'file';
+  relPath: string;
+  content: () => string;
+}
+
+type Entry = DirEntry | FileEntry;
+
+/**
+ * The scaffold plan, relative to the target repo root. Order matters only in
+ * that directories are listed before any files nested under them.
+ */
+function buildPlan(): Entry[] {
+  const plan: Entry[] = [
+    { kind: 'dir', relPath: 'specs' },
+    { kind: 'dir', relPath: path.join('specs', 'patches') },
+    { kind: 'dir', relPath: path.join('specs', 'features') },
+    { kind: 'dir', relPath: path.join('specs', 'systems') },
+    { kind: 'dir', relPath: 'tasks' },
+    { kind: 'dir', relPath: 'decisions' },
+    { kind: 'dir', relPath: 'roles' },
+  ];
+
+  for (const role of ROLE_NAMES) {
+    plan.push({
+      kind: 'file',
+      relPath: path.join('roles', `${role}.md`),
+      content: ROLE_RENDERERS[role],
+    });
+  }
+
+  plan.push({ kind: 'file', relPath: 'AGENTS.md', content: renderAgentsMd });
+  plan.push({
+    kind: 'file',
+    relPath: path.join('.waypoint', 'config.yaml'),
+    content: () => renderConfigYaml(),
+  });
+
+  return plan;
+}
+
+function checkConflict(absPath: string, kind: 'dir' | 'file'): void {
+  if (!existsSync(absPath)) return;
+  const stat = statSync(absPath);
+  if (kind === 'dir' && !stat.isDirectory()) {
+    throw new ScaffoldConflictError(absPath, 'directory');
+  }
+  if (kind === 'file' && stat.isDirectory()) {
+    throw new ScaffoldConflictError(absPath, 'file');
+  }
+}
+
+const LOCK_RETRY_INTERVAL_MS = 50;
+const LOCK_MAX_WAIT_MS = 5000;
+// A lock older than this is assumed abandoned by a crashed/killed process
+// rather than held by a genuinely running install. Reuses LOCK_MAX_WAIT_MS:
+// if we're about to give up waiting anyway, it's also old enough to be
+// considered stale.
+const LOCK_STALE_MS = LOCK_MAX_WAIT_MS;
+
+/** True if `lockDir`'s mtime is old enough to be considered abandoned. */
+async function isLockStale(lockDir: string): Promise<boolean> {
+  try {
+    const info = await fsStat(lockDir);
+    return Date.now() - info.mtimeMs >= LOCK_STALE_MS;
+  } catch {
+    // Lock disappeared on its own (the other process finished) — not
+    // "stale", just already gone; the next mkdir attempt handles that.
+    return false;
+  }
+}
+
+/**
+ * Advisory lock via an exclusively-created directory (`mkdir` without
+ * `recursive` is atomic: exactly one caller wins when two processes race).
+ * Polls until the lock is free or `LOCK_MAX_WAIT_MS` elapses, per the Design
+ * Notes: no distributed lock needed, just enough to serialize two local
+ * `waypoint install` invocations.
+ *
+ * If the wait times out, checks whether the lock is stale (left behind by a
+ * crashed/killed process) before giving up — a stale lock is reclaimed and
+ * acquisition is retried once, instead of permanently blocking every future
+ * `waypoint install` in this repo.
+ *
+ * Exported so `verify.ts` (Story 3.3) can reuse this exact mechanism against
+ * its own, distinct lock path (`.waypoint/.gate-state/.verify-<spec-id>.lock`)
+ * to serialize its `.gate-state` read-merge-write, instead of a second,
+ * independently-drifting implementation.
+ */
+export async function acquireLock(lockDir: string): Promise<boolean> {
+  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+  for (;;) {
+    try {
+      await mkdir(lockDir);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+
+      if (Date.now() < deadline) {
+        await delay(LOCK_RETRY_INTERVAL_MS);
+        continue;
+      }
+
+      if (await isLockStale(lockDir)) {
+        await rm(lockDir, { recursive: true, force: true }).catch(() => {});
+        try {
+          await mkdir(lockDir);
+          return true;
+        } catch (retryErr) {
+          if ((retryErr as NodeJS.ErrnoException).code === 'EEXIST') return false;
+          throw retryErr;
+        }
+      }
+
+      return false;
+    }
+  }
+}
+
+export async function releaseLock(lockDir: string): Promise<void> {
+  // Best-effort: a failure to clean up the lock dir must never mask the
+  // scaffold's real result/error.
+  await rm(lockDir, { recursive: true, force: true }).catch(() => {});
+}
+
+/**
+ * Scaffolds the Waypoint repo structure in `targetDir` (defaults to the
+ * current working directory): `specs/{patches,features,systems}`, `tasks`,
+ * `decisions`, `roles` (+ 4 role prompt files), `AGENTS.md`, and
+ * `.waypoint/config.yaml` — then appends `.waypoint/.gate-state/` to
+ * `.gitignore`.
+ *
+ * Idempotent: any path that already exists is preserved untouched. Safe
+ * under concurrent invocation: writes are serialized behind a local
+ * advisory lock; a run that can't acquire the lock in time no-ops instead
+ * of corrupting or erroring.
+ */
+export async function scaffold(targetDir: string = process.cwd()): Promise<ScaffoldResult> {
+  const waypointDir = path.join(targetDir, '.waypoint');
+  const gitignorePath = path.join(targetDir, '.gitignore');
+  const lockDir = path.join(waypointDir, '.install.lock');
+
+  // Cheap early guard: if `.waypoint` itself is the wrong kind, fail before
+  // doing anything else — including before creating it below to hold the
+  // lock.
+  checkConflict(waypointDir, 'dir');
+
+  const plan = buildPlan();
+
+  // Pre-flight: validate every scaffolded path (the plan, plus `.gitignore`,
+  // which `ensureGitignoreEntry` also writes to) before writing or creating
+  // anything — including `.waypoint/` itself — so a single conflict aborts
+  // the whole install with no partial writes to any path.
+  for (const entry of plan) {
+    checkConflict(path.join(targetDir, entry.relPath), entry.kind);
+  }
+  checkConflict(gitignorePath, 'file');
+
+  // Only now create `.waypoint/` (needed to hold the lock and config.yaml) —
+  // pre-flight above already confirmed nothing conflicts.
+  await mkdir(waypointDir, { recursive: true });
+
+  const acquired = await acquireLock(lockDir);
+  if (!acquired) {
+    return { status: 'skipped-lock-contention', createdPaths: [], preservedPaths: [], warnings: [] };
+  }
+
+  try {
+    const createdPaths: string[] = [];
+    const preservedPaths: string[] = [];
+    const warnings: string[] = [];
+
+    for (const entry of plan) {
+      const absPath = path.join(targetDir, entry.relPath);
+      const alreadyExists = existsSync(absPath);
+
+      if (alreadyExists) {
+        preservedPaths.push(entry.relPath);
+        continue;
+      }
+
+      if (entry.kind === 'dir') {
+        await mkdir(absPath, { recursive: true });
+      } else {
+        await mkdir(path.dirname(absPath), { recursive: true });
+        await writeFile(absPath, entry.content(), 'utf8');
+      }
+      createdPaths.push(entry.relPath);
+    }
+
+    ensureGitignoreEntry(gitignorePath, '.waypoint/.gate-state/');
+
+    // Hook installation is entirely best-effort with respect to the rest of
+    // the install: per the story's own design principle, a hook problem
+    // (permission error, disk full, a hook path that's a directory instead
+    // of a file, ...) must degrade to a warning, never abort — or even
+    // partially lose progress on — an otherwise-successful `scaffold()` run.
+    try {
+      const gitDir = path.join(targetDir, '.git');
+
+      if (!existsSync(gitDir)) {
+        warnings.push(
+          'No .git directory found; skipped installing the pre-commit/pre-merge-commit gate hooks. Run `git init`, then re-run `waypoint install` to enable enforcement.'
+        );
+      } else if (!statSync(gitDir).isDirectory()) {
+        warnings.push(
+          "'.git' is not a plain directory (this repo appears to be a worktree or submodule); skipped installing the pre-commit/pre-merge-commit gate hooks — resolving the real hooks directory for a linked worktree/submodule is not supported."
+        );
+      } else {
+        const hooksDir = path.join(gitDir, 'hooks');
+        await mkdir(hooksDir, { recursive: true });
+
+        for (const hookName of HOOK_NAMES) {
+          const hookAbsPath = path.join(hooksDir, hookName);
+          const hookRelPath = path.join('.git', 'hooks', hookName);
+
+          // Each hook's own write/preserve/inspect logic gets its own
+          // try/catch so a failure on one hook doesn't prevent the loop
+          // from attempting the next one (and doesn't lose the
+          // already-computed createdPaths/preservedPaths/warnings either).
+          try {
+            try {
+              // Exclusive create ('wx'): avoids the existsSync-then-writeFile
+              // TOCTOU window (another process could otherwise create the
+              // hook in between, and this would silently overwrite it),
+              // matching this codebase's own established 'wx' convention
+              // (see new-spec.ts).
+              await writeFile(hookAbsPath, HOOK_SCRIPT_CONTENT, { encoding: 'utf8', flag: 'wx' });
+              await chmod(hookAbsPath, 0o755);
+              createdPaths.push(hookRelPath);
+              continue;
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+            }
+
+            // Lost the exclusive-create race (or the hook already existed
+            // from a prior install) — fall through to the
+            // preserve/foreign-hook-detection path.
+            preservedPaths.push(hookRelPath);
+            const existingContent = readFileSync(hookAbsPath, 'utf8');
+            if (!existingContent.includes(HOOK_MARKER)) {
+              warnings.push(
+                `${hookRelPath} already exists and isn't a Waypoint-managed hook; Waypoint's gate was not installed there. Remove or merge it manually to enable enforcement for this hook.`
+              );
+            } else {
+              // Re-assert the executable bit: a previously-installed
+              // Waypoint hook may have lost it since (e.g. a tool that
+              // resets permissions on copy). Best-effort — if this specific
+              // chmod throws, that's fine to fold into this hook's own
+              // per-hook warning below, not worth a special case.
+              await chmod(hookAbsPath, 0o755);
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            warnings.push(`Could not install the ${hookRelPath} hook: ${message}`);
+          }
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(`Could not install git hooks: ${message}`);
+    }
+
+    return { status: 'installed', createdPaths, preservedPaths, warnings };
+  } finally {
+    await releaseLock(lockDir);
+  }
+}

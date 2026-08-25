@@ -1,0 +1,17 @@
+{
+  "name": "waypoint",
+  "version": "0.1.0",
+  "description": "Waypoint CLI: right-sized spec ceremony for AI-assisted development.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "waypoint": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@waypoint/core": "0.1.0",
+    "commander": "^12.1.0"
+  }
+}

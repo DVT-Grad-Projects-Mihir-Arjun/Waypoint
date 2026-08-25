@@ -11,3 +11,9 @@ _bmad/render/*
 
 # BMAD local-only user config
 _bmad/custom/*.user.toml
+
+/node_modules/
+
+# Build output
+packages/*/dist/
+*.tsbuildinfo

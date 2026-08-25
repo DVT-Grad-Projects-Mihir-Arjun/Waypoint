@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PRD Validation: Waypoint</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+
+    --grade-exc: #16a34a;
+    --grade-good: #65a30d;
+    --grade-fair: #d97706;
+    --grade-poor: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .grade {
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    color: white;
+    font-size: 15px;
+    white-space: nowrap;
+  }
+  .grade-excellent { background: var(--grade-exc); }
+  .grade-good { background: var(--grade-good); }
+  .grade-fair { background: var(--grade-fair); }
+  .grade-poor { background: var(--grade-poor); }
+
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    font-size: 15.5px;
+  }
+  .synthesis p { margin: 0 0 10px; }
+  .synthesis p:last-child { margin-bottom: 0; }
+
+  .dimension-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  section summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before {
+    content: "▸";
+    display: inline-block;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 {
+    display: inline;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    flex: 1;
+  }
+  .verdict-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: white;
+  }
+  .verdict-strong { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+  .verdict-thin { background: var(--verdict-thin); }
+  .verdict-broken { background: var(--verdict-broken); }
+
+  .dim-body { padding: 4px 20px 18px; }
+  .dim-judgment { color: var(--text); font-size: 14.5px; }
+  .dim-judgment p { margin: 0 0 10px; }
+
+  .findings-list { padding: 0 20px 4px; }
+  article.finding {
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  article.finding:first-child { border-top: none; }
+  article.finding header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+  }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+
+  .reviewer-source {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .mechanical {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; }
+  .mechanical li { margin-bottom: 4px; color: var(--text); }
+
+  footer.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <header class="report-header">
+      <div class="title">
+        <h1>Waypoint — Validation Report</h1>
+        <div class="subtitle">docs/prd.md · v0.3</div>
+      </div>
+      <div class="grade grade-excellent">Excellent</div>
+    </header>
+
+    <div class="synthesis">
+      <p>v0.3 holds up well: the tier/gate thesis is stated once and traced consistently through FRs, success metrics, and epics, decisions are surfaced honestly (FR8's enforcement-boundary admission is a standout), and scope is fenced with Non-Goals plus a roundtripped Assumptions Index.</p>
+      <p>What's at risk is mostly at the edges — a couple of unbounded adjectives in the NFR/AC layer, one load-bearing but untagged assumption (git as the sole VCS), a small metric-to-thesis mapping that doesn't quite fit, and a minor headcount ambiguity in the role-prompt requirement. None of these block moving forward; all seven dimensions land strong or adequate and there are zero high or critical findings, which is what earns the Excellent grade under this rubric's rule.</p>
+    </div>
+
+    <div class="dimension-summary">
+      <div class="dim-card">
+        <div class="dim-name">Decision-readiness</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Substance over theater</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Strategic coherence</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Done-ness clarity</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Scope honesty</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Downstream usability</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Shape fit</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+    </div>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Decision-readiness</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The PRD states real decisions rather than hedging them. Background Context resolves the brief's open question ("automatic vs. explicit tier classification") toward explicit, names why, and defers the alternative with a concrete trigger condition ("once real usage data exists on where the tier boundary should sit"). The two <code>[NOTE FOR PM]</code> callouts sit at genuine unresolved tensions — the FR7 bypass-flag escalation question and the FR8/FR9 enforcement-boundary question — each now with an owner and a revisit trigger, not a rhetorical question answered in the next clause.</p>
+            <p>FR8 and FR9 both go further than most PRDs would: FR8 admits its own enforcement is documentation-layer only and doesn't technically stop an agent with shell access, and FR9 explicitly disclaims that Waypoint can guarantee or test agent compliance. That's a trade-off named with what's given up, not smoothed over.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <p style="padding: 0 20px 14px; color: var(--muted); font-size: 14px;">No findings — this dimension is doing its job.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Substance over theater</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>No personas exist, which is correct for a solo/small-team capability tool, not a gap (see Shape fit). NFR1–NFR6 each carry a product-specific bound (zero vendor dependency, ~30s, 2s gate runtime, three named OSes, single-command install) rather than boilerplate "must be scalable/secure" language. The Goals bullets are specific to this product's thesis and wouldn't drop cleanly into a generic PRD. No Differentiation section exists purely because a template expects one — the brief comparison is referenced, not re-litigated.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <p style="padding: 0 20px 14px; color: var(--muted); font-size: 14px;">No findings.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Strategic coherence</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The thesis — ceremony (tier) and enforcement (gate) are decoupled dials, and every competitor couples them — is stated once in Background Context and then actually drives prioritization: FR1–3 establish tiers, FR6–7 establish gates, FR12 was added specifically because the gate mechanism the architecture assumes had no defined classification logic. Success Metrics avoid vanity-metric theater and include a named counter-metric (false-positive rate) against the Patch-tier speed goal.</p>
+            <p>One reconciliation is shakier than the rest: Success Metrics maps the brief's fourth metric ("zero agent-specific code paths in the core") onto NFR1 and NFR5. NFR5 is about macOS/Linux/WSL parity — it says nothing about whether the core has agent-tool-specific branches (Claude Code vs. Cursor vs. bare CLI), which is what the brief's metric was actually about. That leaves the PRD's own vendor-neutral thesis — arguably its central claim — without a metric that actually tracks it.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Fourth success metric reconciled to the wrong NFR</h3>
+              <span class="finding-location">§ Success Metrics</span>
+            </header>
+            <div class="finding-note">The brief's "zero agent-specific code paths in the core" is mapped to NFR5 (OS parity), which doesn't test tool-agnosticism; the thesis's most distinctive claim ends up untracked by any measurable statement.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Either add a thin NFR ("core library contains no agent-specific branching; CLI/gate/drift behavior is identical regardless of invoking tool") or explicitly note that FR9/FR10 are the load-bearing evidence for this metric instead of NFR1/NFR5.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Done-ness clarity</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Most FRs carry a testable consequence: FR1's "no required approval step," FR5's narrowed path/symbol-only scope with an explicit deferral of "materially changed" detection, FR7's block condition, FR12's fail-closed default are all clear enough for an engineer to write a test against. FR9 and FR8 are notably careful about not overclaiming testability.</p>
+            <p>Two spots still lean on an adjective instead of a bound: NFR4's "typical repo" gives a numeric bound (under 2s) but no defined repo-size baseline to benchmark against; Story 3.4 AC3's "other obviously-safe defaults" doesn't enumerate what else counts as safe, leaving the AC a judgment call rather than a checklist. Separately, FR10 and Story 4.2 both specify "3–4 role prompts" while naming exactly four (Planner, Architect, Implementer, Reviewer) in both places — unclear whether one is optional or the range is just imprecise wording.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Unbounded "typical repo" in performance NFR</h3>
+              <span class="finding-location">§ NFR4</span>
+            </header>
+            <div class="finding-note">The 2-second gate budget has no defined repo-size baseline to benchmark against.</div>
+            <div class="finding-fix"><strong>Fix:</strong> State a concrete baseline (e.g., "under 2 seconds on a repo with ≤2,000 tracked files and ≤50 open specs") or point to a fixture repo used for the benchmark.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Unenumerated "obviously-safe defaults"</h3>
+              <span class="finding-location">§ Story 3.4, AC3</span>
+            </header>
+            <div class="finding-note">The default patch-classified path list isn't specified beyond `specs/patches/**`, leaving the AC's completion criterion subjective.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Enumerate the full default pattern list (e.g., `specs/patches/**`, `docs/**`, `*.md` at repo root) so AC3 is a checklist, not a judgment call.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Ambiguous "3–4" role-prompt count against 4 named roles</h3>
+              <span class="finding-location">§ FR10, Story 4.2</span>
+            </header>
+            <div class="finding-note">Both list Planner/Architect/Implementer/Reviewer by name but require only "3–4," without saying which role is optional.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Either commit to exactly 4, or name which role is droppable and under what condition.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Scope honesty</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Non-Goals is substantive and explicitly self-contained, including a v0.3 addition (spec-format-versioning) that closes a real omission. The Assumptions Index is well-formed: three assumptions, each with confidence and an explicit "if wrong, changes" column, plus a closing flag that A1/A3 are expensive to reverse mid-build.</p>
+            <p>One load-bearing assumption isn't tagged at all: the entire gate/enforcement mechanism (FR7, Story 3.1's pre-commit hook, the ledger's linked-commit field, architecture.md's git-hook-based design) assumes git as the sole VCS. Nothing in Technical Assumptions or Non-Goals names this, even though a wrong assumption here would invalidate Epic 3 as designed — comparable in blast radius to A1 and A3, which are tagged.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Untagged git-as-sole-VCS assumption</h3>
+              <span class="finding-location">§ Technical Assumptions; affects FR7, NFR3, Epic 3</span>
+            </header>
+            <div class="finding-note">The gate mechanism is designed entirely around git pre-commit hooks and commit-linked task verification, with no [ASSUMPTION] tag or Non-Goal acknowledging that non-git VCS users are out of scope.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add an [ASSUMPTION: A4] entry ("git is the consuming repo's VCS; gate hook mechanism is git-specific") to the index alongside A1–A3, given it carries similar rebuild cost if wrong.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Downstream usability</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>IDs are contiguous with no gaps or duplicates across FR1–FR12, NFR1–NFR6, and Stories 1.1–5.1. Cross-references consistently resolve to named locations rather than "see above": FR12 → architecture.md's Error Handling Strategy (verified), NFR6 → Story 3.4 AC3 (verified), Story 2.2's out-of-scope note → FR5's scope note (verified), Story 3.3's note → Background Context's [NOTE FOR PM] (verified), FR9 → Story 4.1's note (verified). This is above the rubric's bar — pulling any single FR or Story out in isolation still tells a reader where its caveats live.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <p style="padding: 0 20px 14px; color: var(--muted); font-size: 14px;">No findings.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Shape fit</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>This is correctly shaped as a capability spec for a single-operator/solo-developer tool, not forced into a consumer-product mold: no personas, no UJs with named protagonists, and Success Metrics that are process/operational rather than user-facing engagement metrics. The PRD is appropriately un-formalized where formality would be overhead, while staying substantive on the parts that matter for a technical capability spec.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <p style="padding: 0 20px 14px; color: var(--muted); font-size: 14px;">No findings.</p>
+        </div>
+      </details>
+    </section>
+
+    <div class="mechanical">
+      <h3>Mechanical notes</h3>
+      <ul>
+        <li><strong>Glossary casing drift:</strong> "Feature tier" (FR7, no hyphen) vs. "Feature-tier" (Success Metrics, FR12, Story 3.1 — hyphenated) vs. the Glossary's own phrasing, which names tiers without a "tier" suffix at all. Same pattern for Patch-tier/Patch tier. Low-impact but worth a pass before this feeds a style-sensitive downstream doc.</li>
+        <li><strong>ID continuity:</strong> clean. FR1–FR12, NFR1–NFR6, Epics 1–5, and all Stories are contiguous and uniquely numbered with no gaps.</li>
+        <li><strong>Assumptions Index roundtrip:</strong> clean. All three inline [ASSUMPTION: A1/A2/A3] tags have a matching index row, and all three index rows have a corresponding inline tag (see Scope honesty finding above for a fourth assumption that should exist but doesn't).</li>
+        <li><strong>Cross-references:</strong> all checked references resolve (see Downstream usability above) — no dangling "see above" or broken pointers found.</li>
+        <li><strong>UJ protagonist naming:</strong> N/A — no UJs in this PRD, which is appropriate per Shape fit.</li>
+      </ul>
+    </div>
+
+    <footer class="report-footer">
+      <div class="meta">
+        <span>Rubric: .claude/skills/bmad-prd/assets/prd-validation-checklist.md</span>
+        <span>Generated: 2026-08-20T05:39:53Z</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
