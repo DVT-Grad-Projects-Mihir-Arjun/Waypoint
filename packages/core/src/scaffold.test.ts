@@ -15,6 +15,12 @@ import { parse } from 'yaml';
 import { scaffold, ScaffoldConflictError } from './scaffold.js';
 import { DEFAULT_PATCH_GLOBS } from './config-defaults.js';
 import { renderAgentsMd } from './templates/agents-md.js';
+import {
+  renderPlannerPrompt,
+  renderArchitectPrompt,
+  renderImplementerPrompt,
+  renderReviewerPrompt,
+} from './templates/roles.js';
 
 let tmpDir: string;
 
@@ -44,10 +50,30 @@ describe('scaffold — fresh install', () => {
       expect(statSync(p).isDirectory()).toBe(true);
     }
 
-    for (const role of ['planner', 'architect', 'implementer', 'reviewer']) {
+    const roleRenderers: Record<string, () => string> = {
+      planner: renderPlannerPrompt,
+      architect: renderArchitectPrompt,
+      implementer: renderImplementerPrompt,
+      reviewer: renderReviewerPrompt,
+    };
+
+    for (const [role, render] of Object.entries(roleRenderers)) {
       const p = path.join(tmpDir, 'roles', `${role}.md`);
       expect(existsSync(p), `${p} should exist`).toBe(true);
-      expect(readFileSync(p, 'utf8').length).toBeGreaterThan(0);
+      const content = readFileSync(p, 'utf8');
+      // Two checks, two different things: a role-specific heading-marker
+      // check (matching the AGENTS.md precedent immediately below — a real,
+      // role-specific marker rather than a mere non-empty length check), and
+      // an exact-content-equality check against calling the corresponding
+      // render function directly, confirming scaffold()'s ROLE_RENDERERS map
+      // wires each role to the correct function (not, say, swapped or all
+      // pointing at one renderer). The `approve`-exclusion property itself
+      // is verified precisely (per-role, against each function's own return
+      // value) by `templates/roles.test.ts` — not repeated here to avoid a
+      // second, blunter whole-document substring check.
+      const headingPattern = new RegExp(`^#\\s+${role.charAt(0).toUpperCase()}${role.slice(1)}`);
+      expect(content).toMatch(headingPattern);
+      expect(content).toBe(render());
     }
 
     const agentsMdContent = readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf8');
