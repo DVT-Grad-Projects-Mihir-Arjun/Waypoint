@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { scaffold, ScaffoldConflictError } from './scaffold.js';
 import { DEFAULT_PATCH_GLOBS } from './config-defaults.js';
+import { renderAgentsMd } from './templates/agents-md.js';
 
 let tmpDir: string;
 
@@ -49,7 +50,19 @@ describe('scaffold — fresh install', () => {
       expect(readFileSync(p, 'utf8').length).toBeGreaterThan(0);
     }
 
-    expect(readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf8').length).toBeGreaterThan(0);
+    const agentsMdContent = readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf8');
+    expect(agentsMdContent).toBe(renderAgentsMd());
+    // Independently verify meaningful content directly (not just a raw
+    // string comparison against renderAgentsMd()'s own output), matching the
+    // rigor of the neighboring config.yaml assertion below which parses the
+    // YAML and asserts on actual field values rather than a string compare.
+    // The `approve`-exclusion property itself is verified precisely (scoped
+    // to the Available Commands section, not a whole-document substring
+    // check) by `templates/agents-md.test.ts` — not repeated here to avoid a
+    // second, less precise copy of the same check.
+    expect(agentsMdContent).toMatch(/#+\s*Tier Selection/);
+    expect(agentsMdContent).toMatch(/#+\s*Available Commands/);
+    expect(agentsMdContent).toMatch(/#+\s*Role Prompts/);
   });
 
   it('generates .waypoint/config.yaml whose tiers.patch contains exactly the required globs', async () => {

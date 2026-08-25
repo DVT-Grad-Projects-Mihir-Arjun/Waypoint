@@ -257,7 +257,7 @@ waypoint/
 │   │   ├── prd.md
 │   │   ├── architecture.md
 │   │   └── adr.md
-│   ├── agents-md.template
+│   ├── agents-md.ts
 │   └── roles/
 │       ├── planner.md
 │       ├── architect.md

@@ -26,6 +26,7 @@ export type {
   CreateSystemSpecResult,
 } from './new-spec.js';
 
+export { renderAgentsMd } from './templates/agents-md.js';
 export { renderPatchSpec } from './templates/patch.js';
 export { renderFeatureSpec, PLACEHOLDER_TASK_DESCRIPTION } from './templates/feature.js';
 export { renderFeatureLedgerYaml } from './templates/feature-ledger.js';

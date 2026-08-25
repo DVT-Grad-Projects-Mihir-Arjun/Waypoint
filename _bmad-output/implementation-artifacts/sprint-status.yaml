@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-20-2026 13:35
-last_updated: 08-24-2026 15:10
+last_updated: 08-24-2026 17:00
 project: Alt-Methodology
 project_key: NOKEY
 tracking_system: file-system
@@ -55,8 +55,8 @@ development_status:
   3-5-ci-enforces-the-same-gate-plus-done-claim-correctness: review
   epic-3-retrospective: optional
 
-  epic-4: backlog
-  4-1-agents-md-generation: backlog
+  epic-4: in-progress
+  4-1-agents-md-generation: review
   4-2-role-prompts: backlog
   epic-4-retrospective: optional
 
