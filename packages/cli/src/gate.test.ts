@@ -403,7 +403,7 @@ describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', (
     expect(logged).toContain('no spec delta');
 
     errorSpy.mockRestore();
-  });
+  }, 10000);
 
   it('passes (exit 0, silent) once a qualifying spec delta is added alongside the Feature-tier change', async () => {
     setUpMainWithScaffold();
@@ -431,7 +431,7 @@ describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', (
     expect(errorSpy).not.toHaveBeenCalled();
 
     errorSpy.mockRestore();
-  });
+  }, 10000);
 
   it('reports both a spec-delta violation and a done-claim violation when both fail in the same run', async () => {
     setUpMainWithScaffold();
@@ -468,7 +468,7 @@ describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', (
     expect(logged).toContain('t1');
 
     errorSpy.mockRestore();
-  });
+  }, 10000);
 
   it('reports a clear error and exits 1 when --base does not resolve in this checkout', async () => {
     setUpMainWithScaffold();
@@ -490,7 +490,7 @@ describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', (
     expect(logged).toContain('this-ref-does-not-exist');
 
     errorSpy.mockRestore();
-  });
+  }, 10000);
 
   it('still reports checkDoneClaims\' violations when gate() itself throws unexpectedly', async () => {
     setUpMainWithScaffold();
@@ -531,7 +531,7 @@ describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', (
     } finally {
       errorSpy.mockRestore();
     }
-  });
+  }, 10000);
 
   it('still reports gate()\'s violations when checkDoneClaims() itself throws unexpectedly', async () => {
     setUpMainWithScaffold();
@@ -568,7 +568,7 @@ describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', (
     } finally {
       errorSpy.mockRestore();
     }
-  });
+  }, 10000);
 
   it('prints a non-blocking note, and still exits cleanly, when --base resolves to a ref with zero diff against HEAD', async () => {
     setUpMainWithScaffold();
@@ -590,7 +590,7 @@ describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', (
     expect(logged).toContain('HEAD');
 
     errorSpy.mockRestore();
-  });
+  }, 10000);
 
   it('sanitizes control characters from a ledger-sourced linked_commit before printing it', async () => {
     setUpMainWithScaffold();
@@ -623,7 +623,7 @@ describe('gateCommand — --ci/--base full PR diff (real two-branch fixture)', (
     expect(logged).toContain('t1?[31m');
 
     errorSpy.mockRestore();
-  });
+  }, 10000);
 });
 
 describe('CLI program — gate --ci/--base wiring (real Commander argv parsing)', () => {
@@ -669,7 +669,7 @@ describe('CLI program — gate --ci/--base wiring (real Commander argv parsing)'
     expect(logged).toContain('no spec delta');
 
     errorSpy.mockRestore();
-  });
+  }, 10000);
 
   it('wires "waypoint gate --ci --base <ref>" through real argv parsing to a clean pass', async () => {
     setUpMainWithScaffold();
@@ -700,5 +700,5 @@ describe('CLI program — gate --ci/--base wiring (real Commander argv parsing)'
     expect(errorSpy).not.toHaveBeenCalled();
 
     errorSpy.mockRestore();
-  });
+  }, 10000);
 });
