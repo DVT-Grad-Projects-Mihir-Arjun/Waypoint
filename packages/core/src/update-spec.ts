@@ -532,9 +532,13 @@ const SPEC_ID_SHAPE_PATTERN = /^(patch|feat|system)-\d{4}-\d{2}-\d{2}-[a-zA-Z0-9
  * 2. Reject patch-tier specs — they have no ledger to sync into.
  * 3. Sync pass: parse every `### ADDED` bullet under any `## Delta — ...`
  *    heading in the spec's body, and append a new `pending` ledger row (next
- *    available `t<N>` id; System-tier rows default `phase: 1`) for each
- *    bullet whose trimmed text doesn't already exactly match an existing
- *    task's `description`. Existing rows are never rewritten.
+ *    available `t<N>` id; System-tier rows are assigned to one new phase —
+ *    one past the highest phase number anywhere in the ledger already,
+ *    computed once for the whole call — so a newly-synced task can never
+ *    land in a phase that's already been approved; see Finding 7 of the
+ *    epic-1-5 MVP retrospective) for each bullet whose trimmed text doesn't
+ *    already exactly match an existing task's `description`. Existing rows
+ *    are never rewritten.
  * 4. Scaffold pass: if the most recently appended delta heading is still
  *    completely empty, reuse it (no write to the spec file at all — nothing
  *    changed). Otherwise, append a fresh, empty `## Delta — <date>` block,
@@ -575,12 +579,35 @@ export async function updateSpec(cwd: string, specId: string): Promise<UpdateSpe
   let nextTaskNumber = maxTaskNumber(ledger.tasks) + 1;
   const syncedTaskIds: string[] = [];
 
+  // Every System-tier task synced in this same `updateSpec()` call lands in
+  // the same brand-new phase: one past the highest phase number anywhere in
+  // the ledger already. Computed once, before the loop, so multiple bullets
+  // added in one call group together under one new phase boundary (mirroring
+  // how the original scaffold groups multiple tasks under one phase), and so
+  // this phase number can never already have a `phase_approvals` entry — it
+  // never existed in the ledger before this call. This is what closes
+  // Finding 7's approval bypass: a hardcoded `phase: 1` could silently land
+  // in an already-approved phase, letting `approveSpec()` report
+  // `already-approved` for a task a human has never actually reviewed.
+  //
+  // Uses `reduce` rather than `Math.max(0, ...ledger.tasks.map(...))` for two
+  // edge cases a code review surfaced: spreading a very large ledger's tasks
+  // into `Math.max`'s argument list can throw a `RangeError`, and a
+  // corrupted/hand-typed non-numeric `phase` value (e.g. a YAML `.nan`)
+  // would otherwise silently propagate `NaN` into the newly-synced task's
+  // phase instead of being treated as `0`.
+  const nextPhase =
+    ledger.tasks.reduce(
+      (max, t) => Math.max(max, Number.isFinite(t.phase) ? (t.phase as number) : 0),
+      0
+    ) + 1;
+
   for (const bulletText of addedBullets) {
     if (existingDescriptions.has(bulletText)) continue;
 
     const newRow: LedgerTaskRow = {
       id: `t${nextTaskNumber}`,
-      ...(found.tier === 'system' ? { phase: 1 } : {}),
+      ...(found.tier === 'system' ? { phase: nextPhase } : {}),
       description: bulletText,
       status: 'pending',
       linked_commit: null,

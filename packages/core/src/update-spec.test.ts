@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import { approveSpec } from './approve.js';
 import { createFeatureSpec, createSystemSpec } from './new-spec.js';
 import { scaffold } from './scaffold.js';
 import {
@@ -300,7 +301,7 @@ describe('updateSpec — system-tier sync', () => {
     await scaffold(tmpDir);
   });
 
-  it('gives a synced ADDED bullet a new row with phase: 1 for a System-tier spec', async () => {
+  it('gives a synced ADDED bullet a new row placed one phase past the highest phase already in the ledger, for a System-tier spec', async () => {
     const created = await createSystemSpec(tmpDir, 'billing-platform');
 
     const first = await updateSpec(tmpDir, created.id);
@@ -320,9 +321,138 @@ describe('updateSpec — system-tier sync', () => {
     const ledger = readLedger(created.ledgerPath);
     const newRow = ledger.tasks.find((t) => t.id === newTaskId);
     expect(newRow).toBeDefined();
-    expect(newRow!.phase).toBe(1);
+    // The freshly-scaffolded ledger already has t1/phase 1 and t2/phase 2
+    // (renderSystemLedgerYaml's two placeholder tasks) -- the newly-synced
+    // task must land in phase 3, one past the highest existing phase, never
+    // hardcoded back to phase 1 (Finding 7 of the epic-1-5 MVP
+    // retrospective: a hardcoded phase 1 would silently land in a phase
+    // that may already be fully approved, bypassing waypoint approve's
+    // human-only gate for a task no human has ever reviewed).
+    expect(newRow!.phase).toBe(3);
     expect(newRow!.description).toBe('Add invoicing webhook');
     expect(newRow!.status).toBe('pending');
+  });
+});
+
+// -- Finding 7 regression (epic-1-5 MVP retrospective) -----------------------
+//
+// `updateSpec()`'s sync pass used to hardcode every newly-synced System-tier
+// task to `phase: 1`, regardless of which phases were already approved. That
+// silently bypassed `waypoint approve`'s human-only approval gate: once every
+// existing phase is approved, `approveSystemSpec` decides what still needs
+// review purely from which *phase numbers* exist in the ledger, not which
+// task ids were ever reviewed -- so a task landing back in an
+// already-approved phase 1 made `approveSpec()` report `already-approved`
+// for a task no human had ever seen. This test reproduces that exact live
+// scenario end to end (`createSystemSpec` -> approve both phases ->
+// `updateSpec` an ADDED bullet -> `approveSpec` again) and asserts the new
+// task's phase is never one already covered by an existing `phase_approvals`
+// entry.
+
+describe('updateSpec — Finding 7 regression: a task synced after full approval never lands in an already-approved phase', () => {
+  beforeEach(async () => {
+    await scaffold(tmpDir);
+  });
+
+  it("assigns the newly-synced task to phase 3 (one past every phase already in phase_approvals), not the hardcoded phase 1", async () => {
+    const created = await createSystemSpec(tmpDir, 'billing-platform');
+
+    // Scaffold the first Delta heading (no bullets yet -- nothing to sync).
+    const scaffolded = await updateSpec(tmpDir, created.id);
+    expect(scaffolded.syncedTaskIds).toHaveLength(0);
+
+    // Fully approve both of the spec's original phases (1 and 2) --
+    // `status` flips to `approved` on the second call.
+    const approvedPhase1 = await approveSpec(tmpDir, created.id);
+    expect(approvedPhase1.approvedPhase).toBe(1);
+    const approvedPhase2 = await approveSpec(tmpDir, created.id);
+    expect(approvedPhase2.approvedPhase).toBe(2);
+    expect(approvedPhase2.statusApproved).toBe(true);
+
+    const frontmatterAfterApproval = (() => {
+      const raw = readFileSync(created.prdPath, 'utf8');
+      const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+      expect(match).not.toBeNull();
+      return parse(match![1]!) as Record<string, unknown>;
+    })();
+    expect(frontmatterAfterApproval.status).toBe('approved');
+    const approvedPhaseNumbers = (
+      frontmatterAfterApproval.phase_approvals as Array<Record<string, unknown>>
+    ).map((entry) => entry.phase);
+    expect(approvedPhaseNumbers.sort()).toEqual([1, 2]);
+
+    // Add a brand-new '### ADDED' bullet to the now-fully-approved spec's
+    // current Delta section -- the exact live-reproduction scenario from the
+    // retrospective.
+    let raw = readFileSync(created.prdPath, 'utf8');
+    raw = raw.replace(
+      `${scaffolded.deltaHeading}\n\n### ADDED\n`,
+      `${scaffolded.deltaHeading}\n\n### ADDED\n- Add a refund webhook\n`
+    );
+    writeFileSync(created.prdPath, raw, 'utf8');
+
+    const synced = await updateSpec(tmpDir, created.id);
+    expect(synced.syncedTaskIds).toHaveLength(1);
+    const newTaskId = synced.syncedTaskIds[0]!;
+
+    const ledger = readLedger(created.ledgerPath);
+    const newRow = ledger.tasks.find((t) => t.id === newTaskId);
+    expect(newRow).toBeDefined();
+
+    // The load-bearing assertion: the new task's phase must NOT be one of
+    // the phases already present in `phase_approvals` (1 or 2) -- it must be
+    // `Math.max(existing phases) + 1 = 3`, guaranteed to require a fresh
+    // approval call.
+    expect(approvedPhaseNumbers).not.toContain(newRow!.phase);
+    expect(newRow!.phase).toBe(3);
+
+    // Chain the rest of the way through the real approval gate: calling
+    // `approveSpec()` again must NOT report `already-approved` -- it must
+    // see the brand-new phase 3 as genuinely requiring review.
+    const finalApproval = await approveSpec(tmpDir, created.id);
+    expect(finalApproval.outcome).toBe('approved');
+    expect(finalApproval.approvedPhase).toBe(3);
+  });
+
+  it('groups multiple ADDED bullets synced in the same updateSpec() call into one identical new phase, not one incremented per bullet', async () => {
+    const created = await createSystemSpec(tmpDir, 'billing-platform');
+
+    // Scaffold the first Delta heading (no bullets yet -- nothing to sync).
+    const scaffolded = await updateSpec(tmpDir, created.id);
+    expect(scaffolded.syncedTaskIds).toHaveLength(0);
+
+    // Fully approve both of the spec's original phases (1 and 2), same as
+    // the regression test above -- so a freshly-synced phase 3 is verifiably
+    // brand new, not a coincidence of the freshly-scaffolded ledger's own
+    // placeholder phases.
+    const approvedPhase1 = await approveSpec(tmpDir, created.id);
+    expect(approvedPhase1.approvedPhase).toBe(1);
+    const approvedPhase2 = await approveSpec(tmpDir, created.id);
+    expect(approvedPhase2.approvedPhase).toBe(2);
+
+    // Two distinct, un-synced '### ADDED' bullets under the same current
+    // Delta heading, added in one edit before updateSpec() ever runs.
+    let raw = readFileSync(created.prdPath, 'utf8');
+    raw = raw.replace(
+      `${scaffolded.deltaHeading}\n\n### ADDED\n`,
+      `${scaffolded.deltaHeading}\n\n### ADDED\n- Add a refund webhook\n- Add a chargeback webhook\n`
+    );
+    writeFileSync(created.prdPath, raw, 'utf8');
+
+    const synced = await updateSpec(tmpDir, created.id);
+    expect(synced.syncedTaskIds).toHaveLength(2);
+
+    const ledger = readLedger(created.ledgerPath);
+    const newRows = synced.syncedTaskIds.map((id) => ledger.tasks.find((t) => t.id === id));
+    expect(newRows[0]).toBeDefined();
+    expect(newRows[1]).toBeDefined();
+
+    // Both bullets synced in this one call land in the identical new phase
+    // (3) -- never incremented per-bullet (which would have put the second
+    // bullet in phase 4).
+    expect(newRows[0]!.phase).toBe(3);
+    expect(newRows[1]!.phase).toBe(3);
+    expect(newRows[0]!.phase).toBe(newRows[1]!.phase);
   });
 });
 

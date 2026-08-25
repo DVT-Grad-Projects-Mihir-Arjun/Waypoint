@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import {
   mkdtempSync,
   mkdirSync,
@@ -10,9 +11,11 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { scaffold, ScaffoldConflictError } from './scaffold.js';
+import { gate } from './gate.js';
 import { DEFAULT_PATCH_GLOBS } from './config-defaults.js';
 import { renderAgentsMd } from './templates/agents-md.js';
 import {
@@ -21,6 +24,26 @@ import {
   renderImplementerPrompt,
   renderReviewerPrompt,
 } from './templates/roles.js';
+
+// The built CLI entry point — used only by the real-installed-hook test
+// below, to prove `scaffold()`'s own first commit genuinely passes through
+// the real pre-commit hook (which shells to Story 3.2's real `gate()`),
+// mirroring `verify.test.ts`'s and `packages/cli/src/gate.test.ts`'s own
+// analogous end-to-end tests. Requires `npm run build` to have run first.
+const CLI_DIST_ENTRY = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../cli/dist/index.js'
+);
+
+function git(args: string[], cwd: string): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+}
+
+function initGitRepo(cwd: string): void {
+  git(['init', '-q'], cwd);
+  git(['config', 'user.email', 'test@example.com'], cwd);
+  git(['config', 'user.name', 'Test'], cwd);
+}
 
 let tmpDir: string;
 
@@ -98,7 +121,15 @@ describe('scaffold — fresh install', () => {
     const parsed = parse(raw) as { check_command: string; tiers: { patch: string[] } };
 
     expect(parsed.tiers.patch).toEqual([...DEFAULT_PATCH_GLOBS]);
-    expect(parsed.tiers.patch).toEqual(['specs/patches/**', 'docs/**', '*.md', 'tasks/**']);
+    expect(parsed.tiers.patch).toEqual([
+      'specs/patches/**',
+      'docs/**',
+      '*.md',
+      'tasks/**',
+      '.gitignore',
+      '.waypoint/config.yaml',
+      'roles/**',
+    ]);
     expect(typeof parsed.check_command).toBe('string');
     expect(parsed.check_command.length).toBeGreaterThan(0);
   });
@@ -340,7 +371,7 @@ describe('scaffold — concurrent install', () => {
 
     const raw = readFileSync(path.join(tmpDir, '.waypoint', 'config.yaml'), 'utf8');
     const parsed = parse(raw) as { tiers: { patch: string[] } };
-    expect(parsed.tiers.patch).toEqual(['specs/patches/**', 'docs/**', '*.md', 'tasks/**']);
+    expect(parsed.tiers.patch).toEqual([...DEFAULT_PATCH_GLOBS]);
 
     const gitignore = readFileSync(path.join(tmpDir, '.gitignore'), 'utf8');
     expect(gitignore.split(/\r?\n/).filter((l) => l === '.waypoint/.gate-state/')).toHaveLength(1);
@@ -350,4 +381,65 @@ describe('scaffold — concurrent install', () => {
     const followUp = await scaffold(tmpDir);
     expect(followUp.status).toBe('installed');
   });
+});
+
+describe('scaffold — its own first commit passes the real installed gate hook (Finding 1 regression)', () => {
+  it("a fresh install's own scaffolded output (.gitignore, .waypoint/config.yaml, roles/*.md included) commits cleanly through the real pre-commit hook with no spec delta needed", async () => {
+    // Unlike every other test in this file, this one deliberately uses a
+    // real git repo and the real installed pre-commit hook (which shells to
+    // Story 3.2's real `gate()`) instead of just inspecting scaffold()'s
+    // return value — the whole point is to prove the very first
+    // `git add -A && git commit` a fresh `waypoint install` invites actually
+    // succeeds, not merely that DEFAULT_PATCH_GLOBS contains the right
+    // strings. Mirrors verify.test.ts's and packages/cli/src/gate.test.ts's
+    // own "real installed hook" end-to-end tests.
+    initGitRepo(tmpDir);
+
+    const scaffoldResult = await scaffold(tmpDir);
+    expect(scaffoldResult.warnings).toEqual([]);
+
+    // The hook's `npx waypoint gate` line assumes the package is
+    // published/linked; point it at this repo's own built CLI instead, same
+    // technique the other real-hook tests use.
+    const hookPath = path.join(tmpDir, '.git', 'hooks', 'pre-commit');
+    const hookContent = readFileSync(hookPath, 'utf8');
+    // Guard the replace below: if the hook template's exact wording ever
+    // changes, fail loudly right here instead of the replace silently
+    // no-op'ing and the real `npx` shell-out failing later for a confusing,
+    // unrelated reason.
+    expect(hookContent).toContain('exec npx waypoint gate');
+    writeFileSync(
+      hookPath,
+      hookContent.replace('exec npx waypoint gate', `exec node '${CLI_DIST_ENTRY}' gate`)
+    );
+
+    git(['add', '-A'], tmpDir);
+
+    expect(() => git(['commit', '-m', 'init'], tmpDir)).not.toThrow();
+
+    const log = git(['log', '--oneline'], tmpDir);
+    expect(log).toContain('init');
+
+    const changedFiles = git(['show', '--name-only', '--pretty=format:', 'HEAD'], tmpDir)
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean);
+    // `git show`'s own path reporting is always forward-slash-normalized,
+    // regardless of host OS -- compare against literals, not `path.join`
+    // (which would produce a backslash on Windows and never match; this
+    // exact pattern has already broken CI three times this session).
+    expect(changedFiles).toContain('.gitignore');
+    expect(changedFiles).toContain('.waypoint/config.yaml');
+    expect(changedFiles).toContain('roles/planner.md');
+    expect(changedFiles).toContain('AGENTS.md');
+
+    // Also call gate() directly against the same changed-file list, so a
+    // future regression that only breaks classification for one specific
+    // path (e.g. `roles/**` stops matching but `.gitignore` still does)
+    // names which violation fired in this test's own failure output, rather
+    // than the assertion above just reporting "the commit threw."
+    const gateResult = await gate({ mode: 'staged', changedFiles, repoRoot: tmpDir });
+    expect(gateResult.violations).toEqual([]);
+    expect(gateResult.ok).toBe(true);
+  }, 20000);
 });
