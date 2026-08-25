@@ -20,11 +20,11 @@ See [`docs/brief.md`](docs/brief.md) for the full problem statement and [`docs/p
 
 **Three tiers, chosen explicitly, never inferred.** Every change is recorded as a spec at one of three tiers — you pick the tier by which command you run, not by an automatic heuristic on diff size:
 
-| Tier | For | Approval | Artifacts |
-|---|---|---|---|
-| **Patch** | A small, self-contained change with no design ambiguity | None | `specs/patches/<id>.md` |
-| **Feature** | A change that adds behavior or needs upfront design | One gate, granted once | `specs/features/<id>.md` + `tasks/<id>.ledger.yaml` |
-| **System** | Work spanning multiple architecture-level decisions | Phased — once per ledger phase boundary | `specs/systems/<id>/{prd.md,architecture.md,adr.md}` + `tasks/<id>.ledger.yaml` |
+| Tier        | For                                                     | Approval                                | Artifacts                                                                       |
+| ----------- | ------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| **Patch**   | A small, self-contained change with no design ambiguity | None                                    | `specs/patches/<id>.md`                                                         |
+| **Feature** | A change that adds behavior or needs upfront design     | One gate, granted once                  | `specs/features/<id>.md` + `tasks/<id>.ledger.yaml`                             |
+| **System**  | Work spanning multiple architecture-level decisions     | Phased — once per ledger phase boundary | `specs/systems/<id>/{prd.md,architecture.md,adr.md}` + `tasks/<id>.ledger.yaml` |
 
 When unsure, prefer the lowest tier that honestly captures the change's design ambiguity and blast radius — escalating a Patch to a Feature later is normal and cheap.
 
@@ -41,8 +41,8 @@ When unsure, prefer the lowest tier that honestly captures the change's design a
 Waypoint isn't published to a package registry yet. To use it today, build it from source and link the CLI locally:
 
 ```bash
-git clone https://github.com/DVT-Grad-Projects-Mihir-Arjun/Alt-Methodology.git
-cd Alt-Methodology
+git clone https://github.com/DVT-Grad-Projects-Mihir-Arjun/Waypoint.git
+cd Waypoint
 npm install
 npm run build
 cd packages/cli && npm link && cd -   # puts a `waypoint` command on your PATH
@@ -93,18 +93,18 @@ waypoint check-drift
 
 ## CLI reference
 
-| Command | Description |
-|---|---|
-| `waypoint install` | Scaffold the Waypoint repo structure and install the git-hook gate |
-| `waypoint new-patch <name>` | Create a new Patch-tier spec |
-| `waypoint new-feature <name>` | Create a new Feature-tier spec + task ledger |
-| `waypoint new-system <name>` | Create a new System-tier spec set + phased task ledger |
-| `waypoint update <spec-id>` | Sync new `### ADDED` bullets into the ledger; append a fresh delta block |
-| `waypoint approve <spec-id>` | Human-only approval gate — Feature tier once, System tier per phase |
-| `waypoint verify <spec-id> <task-id>` | Run `check_command`; on success, record the task as done + verified |
-| `waypoint check-drift` | Flag spec references to files/symbols that no longer resolve |
-| `waypoint status` | Read-only report of every open spec, its approval state, and task completion |
-| `waypoint gate [--ci --base <ref>]` | The enforcement check itself — runs as a git hook by default, or in full-PR-diff CI mode |
+| Command                               | Description                                                                              |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `waypoint install`                    | Scaffold the Waypoint repo structure and install the git-hook gate                       |
+| `waypoint new-patch <name>`           | Create a new Patch-tier spec                                                             |
+| `waypoint new-feature <name>`         | Create a new Feature-tier spec + task ledger                                             |
+| `waypoint new-system <name>`          | Create a new System-tier spec set + phased task ledger                                   |
+| `waypoint update <spec-id>`           | Sync new `### ADDED` bullets into the ledger; append a fresh delta block                 |
+| `waypoint approve <spec-id>`          | Human-only approval gate — Feature tier once, System tier per phase                      |
+| `waypoint verify <spec-id> <task-id>` | Run `check_command`; on success, record the task as done + verified                      |
+| `waypoint check-drift`                | Flag spec references to files/symbols that no longer resolve                             |
+| `waypoint status`                     | Read-only report of every open spec, its approval state, and task completion             |
+| `waypoint gate [--ci --base <ref>]`   | The enforcement check itself — runs as a git hook by default, or in full-PR-diff CI mode |
 
 Run `waypoint <command> --help` for a command's full description.
 
