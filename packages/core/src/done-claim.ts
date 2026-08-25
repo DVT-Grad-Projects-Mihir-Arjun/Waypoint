@@ -49,43 +49,53 @@ function gitStdio(): { stdio: ['pipe', 'pipe', 'pipe']; timeout: number } {
 }
 
 /**
- * Recursively collects every `*.ledger.yaml` file under `<repoRoot>/tasks`,
- * returning repo-relative, forward-slash paths (e.g.
- * `tasks/feat-demo.ledger.yaml`, or `tasks/nested/feat-demo.ledger.yaml` for
- * a nested layout) — built incrementally during the walk itself, never via
- * `path.relative` (whose own output is OS-native-separated, backslash on
- * Windows, which would corrupt both the violation messages below and any
- * future exact-string comparison against these paths).
+ * Collects every `*.ledger.yaml` file directly under `<repoRoot>/tasks` (a
+ * flat, single-level scan — no recursion into subdirectories), returning
+ * repo-relative, forward-slash paths (e.g. `tasks/feat-demo.ledger.yaml`) —
+ * built directly from `entry.name`, never via `path.relative` (whose own
+ * output is OS-native-separated, backslash on Windows, which would corrupt
+ * both the violation messages below and any future exact-string comparison
+ * against these paths).
  *
- * A directory that can't be read (permissions, or removed mid-walk) is
- * silently skipped rather than failing the whole scan — this mirrors
- * `check-drift.ts`'s own `collectRepoFiles` convention, without reusing that
- * unexported, full-repo-scoped walker.
+ * Flat by design, matching the identical convention every other ledger
+ * consumer (`update-spec.ts`, `approve.ts`, `status.ts`) already assumes —
+ * each resolves a ledger only at the flat path `tasks/<id>.ledger.yaml`,
+ * and no real scaffolding code ever produces a nested layout. This used to
+ * recurse into subdirectories, but that was speculative generality with no
+ * current producer: a ledger relocated into a subdirectory would have been
+ * found here but reported as unreadable by every other command (epic-1-5
+ * MVP retrospective, Finding 17).
+ *
+ * A `tasks/` directory that can't be read is silently treated as empty
+ * rather than failing the whole scan — this mirrors `check-drift.ts`'s own
+ * `collectRepoFiles` convention, without reusing that unexported,
+ * full-repo-scoped walker. Two distinct cases share this one `catch`, and
+ * they are not equally benign: a missing directory (no specs exist yet, or
+ * none have ever been scaffolded) is the expected, common case this is
+ * meant to handle gracefully. A directory that *exists* but became
+ * transiently unreadable (permissions, an I/O fault, removed mid-walk) would
+ * ALSO be silently treated as empty by this same `catch` — even though it
+ * could hold real `done` ledgers a done-claim check should not silently skip.
+ * That is a known, accepted limitation of this fail-open behavior, not a
+ * case silently endorsed as equally fine as "missing" -- changing it to
+ * fail closed instead is a bigger decision, deliberately out of scope here.
  */
 async function collectLedgerFiles(repoRoot: string): Promise<string[]> {
-  const results: string[] = [];
+  const tasksDirAbsPath = path.join(repoRoot, 'tasks');
 
-  async function walk(dirAbsPath: string, dirRelPath: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(dirAbsPath, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      const entryRelPath = dirRelPath === '' ? entry.name : `${dirRelPath}/${entry.name}`;
-      const entryAbsPath = path.join(dirAbsPath, entry.name);
-
-      if (entry.isDirectory()) {
-        await walk(entryAbsPath, entryRelPath);
-      } else if (entry.isFile() && entry.name.endsWith('.ledger.yaml')) {
-        results.push(entryRelPath);
-      }
-    }
+  let entries;
+  try {
+    entries = await readdir(tasksDirAbsPath, { withFileTypes: true });
+  } catch {
+    return [];
   }
 
-  await walk(path.join(repoRoot, 'tasks'), 'tasks');
+  const results: string[] = [];
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.endsWith('.ledger.yaml')) {
+      results.push(`tasks/${entry.name}`);
+    }
+  }
   return results;
 }
 
@@ -101,11 +111,21 @@ type LedgerTaskRow = Record<string, unknown> & {
  * the very PR/checkout being checked — never trust its shape before treating
  * it as a positional argument to `git`. `waypoint verify` (the sole
  * legitimate writer of this field) always writes a full 40-character hex
- * SHA, so that is the *only* shape accepted here; anything else (including
- * something shaped like a git flag, e.g. `--upload-pack=/tmp/x`) is rejected
- * before ever reaching `execFileSync`.
+ * SHA (`git rev-parse HEAD` in a standard SHA-1 repository), so that is the
+ * *only* shape accepted here; anything else (including an abbreviated hash,
+ * or something shaped like a git flag, e.g. `--upload-pack=/tmp/x`) is
+ * rejected before ever reaching `execFileSync`.
+ *
+ * Exactly 40 hex characters, not `{4,40}` — the previous, looser pattern
+ * accepted any abbreviated hash from 4 characters up, which was tighter than
+ * nothing but looser than what this comment (and `waypoint verify`'s own
+ * writer) actually document (epic-1-5 MVP retrospective, Finding 16).
+ * Deliberately does NOT also accept a 64-character SHA-256 hash: this
+ * codebase's own Technical Assumptions name git as the sole supported VCS
+ * with no SHA-256 commitment either way, so widening this pattern for that
+ * case is a separate, out-of-scope concern for now.
  */
-const COMMIT_HASH_PATTERN = /^[0-9a-f]{4,40}$/i;
+const COMMIT_HASH_PATTERN = /^[0-9a-f]{40}$/i;
 
 /**
  * Runs `git merge-base --is-ancestor -- <commit> HEAD` in `repoRoot`. Exit

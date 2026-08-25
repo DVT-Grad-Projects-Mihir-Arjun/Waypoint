@@ -10,6 +10,7 @@ import {
   todayIsoDate,
 } from './update-spec.js';
 import type { FoundSpec } from './update-spec.js';
+import { SPEC_ID_SHAPE_PATTERN, withSpecLock } from './verify.js';
 
 /**
  * `waypoint approve <spec-id>` (Story 3.4) — the sole mechanism that moves a
@@ -335,9 +336,19 @@ async function approveFeatureSpec(cwd: string, found: FoundSpec): Promise<Approv
  * `phase` numbers across its tasks, ascending -- the existing source of
  * truth for "how many phase boundaries exist" (Story 1.3's ledger schema),
  * not a new one. A self-contained reader (mirrors `verify.ts`'s own
- * `readLedgerFile`, rather than reusing `update-spec.ts`'s internal,
- * unexported `readLedger` -- this module only ever needs the distinct
- * `phase` values, never the full task rows).
+ * `readLedgerFile` in *shape* -- a small, dedicated reader that only ever
+ * needs the distinct `phase` values, never the full task rows, rather than
+ * reusing `update-spec.ts`'s internal, unexported `readLedger`).
+ *
+ * Unlike `verify.ts`'s `readLedgerFile`, this function is NOT itself
+ * non-throwing: a missing/malformed ledger (unreadable file, invalid YAML,
+ * no top-level `tasks` array) throws `LedgerNotFoundError` rather than
+ * returning `null`. That's intentional, not a bug -- the CLI layer already
+ * catches `LedgerNotFoundError` in its known-error list and reports it
+ * cleanly, so this is a real, deliberate, already-correctly-handled error
+ * path, not a raw crash (epic-1-5 MVP retrospective, Finding 15; a prior
+ * version of this comment incorrectly claimed to mirror `readLedgerFile`'s
+ * non-throwing convention too).
  */
 async function readLedgerDistinctPhases(cwd: string, id: string): Promise<number[]> {
   const ledgerPath = path.join(cwd, 'tasks', `${id}.ledger.yaml`);
@@ -364,9 +375,17 @@ async function readLedgerDistinctPhases(cwd: string, id: string): Promise<number
     throw new LedgerNotFoundError(ledgerPath, "missing a top-level 'tasks' array");
   }
 
-  const tasks = (parsed as { tasks: Array<Record<string, unknown>> }).tasks;
+  const tasks = (parsed as { tasks: Array<Record<string, unknown> | null> }).tasks;
   const phases = new Set<number>();
   for (const task of tasks) {
+    // A `null`/non-object task row (a plausible hand-edit mistake, e.g. a
+    // stray blank list item) must never crash this whole call by accessing
+    // `.phase` on it -- skip it and move on, same guard shape
+    // `status.ts`/`done-claim.ts` already apply to the identical
+    // malformed-row possibility (epic-1-5 MVP retrospective, Finding 8).
+    if (!task || typeof task !== 'object') {
+      continue;
+    }
     if (typeof task.phase === 'number') {
       phases.add(task.phase);
     }
@@ -540,25 +559,40 @@ async function approveSystemSpec(cwd: string, found: FoundSpec): Promise<Approve
   };
 }
 
-// Matches the shape every `create*Spec()` function actually generates
-// (`patch-<date>-<name>`, `feat-<date>-<name>`, `system-<date>-<name>`).
-// Same defensive guard as `update-spec.ts`'s own (unexported)
-// `SPEC_ID_SHAPE_PATTERN`: `found.id` is always exactly the caller's
-// `specId` (`findSpecById` only ever matches by strict string equality). Only
-// applied to System tier below -- System tier builds a
-// `tasks/<id>.ledger.yaml` path directly from `found.id` (a corrupted/
-// adversarial id must never escape the `tasks/` directory), but Feature tier
-// never builds a filesystem path from `found.id` at all, so applying this
-// guard there would wrongly reject a legitimately-located Feature spec whose
-// (e.g. hand-edited) id doesn't happen to match this shape. A real spec's id
-// can never fail this check.
-const SPEC_ID_SHAPE_PATTERN = /^(patch|feat|system)-\d{4}-\d{2}-\d{2}-[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+// `SPEC_ID_SHAPE_PATTERN` is imported from `verify.ts` (shared with
+// `update-spec.ts` -- see that export's own doc comment for why the two
+// modules must agree on which ids are valid). `found.id` is always exactly
+// the caller's `specId` (`findSpecById` only ever matches by strict string
+// equality).
+//
+// Applied uniformly to both Feature and System tier below (patch tier is
+// already rejected earlier). This used to be scoped to System tier only, on
+// the reasoning "Feature tier never builds a path from the id" -- true only
+// *inside this module*: `update-spec.ts`'s own Feature-tier sync pass also
+// builds a `tasks/<id>.ledger.yaml` path from the identical id, so a
+// malformed-shaped Feature-tier id used to `approve` successfully and then
+// fail `update` for the same id -- an inter-command contract mismatch (see
+// the epic-1-5 MVP retrospective, Finding 11). Applying the guard uniformly
+// here matches `update-spec.ts`'s own existing behavior for every tier it
+// supports, so the two commands agree on which ids are valid. A real spec's
+// id can never fail this check.
 
 /**
  * `waypoint approve <spec-id>` (Story 3.4): locates the spec via
  * `findSpecById`, rejects patch tier, and dispatches to the Feature/System
  * tier's own approval routine. See this story's Boundaries & Constraints for
  * the full behavioral contract.
+ *
+ * The dispatch to `approveFeatureSpec`/`approveSystemSpec` -- each of which
+ * reads the spec file (and, for System tier, the ledger) and later writes a
+ * modified version derived from that snapshot -- runs inside `verify.ts`'s
+ * exported `withSpecLock`, keyed by `found.id`: the *same* per-spec lock
+ * path `waypoint verify`/`waypoint update` already use for this spec. Before
+ * this, `approveSpec()` had no locking at all, a real concurrent-write
+ * corruption risk against a concurrent `waypoint update` on the same spec's
+ * file, or a concurrent System-tier `waypoint verify` write to the same
+ * ledger `approveSystemSpec` reads (epic-1-5 MVP retrospective, Findings 9
+ * and 14).
  */
 export async function approveSpec(cwd: string, specId: string): Promise<ApproveResult> {
   const found = await findSpecById(cwd, specId);
@@ -570,15 +604,11 @@ export async function approveSpec(cwd: string, specId: string): Promise<ApproveR
   if (found.tier === 'patch') {
     throw new PatchTierApprovalNotSupportedError(specId);
   }
-
-  if (found.tier === 'feature') {
-    return approveFeatureSpec(cwd, found);
-  }
-
-  // System tier only -- see `SPEC_ID_SHAPE_PATTERN`'s own comment above for
-  // why this guard doesn't apply to Feature tier.
   if (!SPEC_ID_SHAPE_PATTERN.test(found.id)) {
     throw new SpecNotFoundError(specId);
   }
-  return approveSystemSpec(cwd, found);
+
+  return withSpecLock(cwd, found.id, () =>
+    found.tier === 'feature' ? approveFeatureSpec(cwd, found) : approveSystemSpec(cwd, found)
+  );
 }
