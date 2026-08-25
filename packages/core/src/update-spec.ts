@@ -289,6 +289,59 @@ export async function findSpecById(cwd: string, specId: string): Promise<FoundSp
   return matches[0] ?? null;
 }
 
+/**
+ * Locates every spec file across all three tiers (`specs/patches/<name>.md`,
+ * `specs/features/<name>.md`, `specs/systems/<name>/prd.md`) whose
+ * frontmatter parses successfully, returning one `FoundSpec` per match — the
+ * same directory walk and frontmatter parsing `findSpecById` already
+ * performs, generalized to return every hit instead of filtering to a single
+ * `specId`. Unlike `findSpecById`, this never throws `DuplicateSpecIdError`:
+ * that concept ("two files claim the same id") doesn't apply to a call whose
+ * whole point is to return every match, not resolve one specific id.
+ *
+ * A file that fails to parse (missing/malformed frontmatter, an invalid
+ * `tier`) is silently skipped, exactly as `findSpecById` already tolerates
+ * for its own candidates — an unrelated malformed file elsewhere in `specs/`
+ * must not block reporting every other spec that did parse.
+ */
+export async function findAllSpecs(cwd: string): Promise<FoundSpec[]> {
+  const patchesDir = path.join(cwd, 'specs', 'patches');
+  const featuresDir = path.join(cwd, 'specs', 'features');
+  const systemsDir = path.join(cwd, 'specs', 'systems');
+
+  const candidatePaths: string[] = [];
+
+  for (const name of await safeReaddirNames(patchesDir)) {
+    if (name.endsWith('.md')) candidatePaths.push(path.join(patchesDir, name));
+  }
+  for (const name of await safeReaddirNames(featuresDir)) {
+    if (name.endsWith('.md')) candidatePaths.push(path.join(featuresDir, name));
+  }
+  for (const dirName of await safeReaddirSystemDirNames(systemsDir)) {
+    candidatePaths.push(path.join(systemsDir, dirName, 'prd.md'));
+  }
+
+  const found: FoundSpec[] = [];
+
+  for (const candidatePath of candidatePaths) {
+    let raw: string;
+    try {
+      raw = await readFile(candidatePath, 'utf8');
+    } catch {
+      // Vanished between the directory listing and the read (e.g. a
+      // concurrent delete), or unreadable for some other reason — either
+      // way, not a match; keep walking the rest of the candidates.
+      continue;
+    }
+    const frontmatter = parseFrontmatterIdAndTier(raw);
+    if (frontmatter) {
+      found.push({ path: candidatePath, id: frontmatter.id, tier: frontmatter.tier });
+    }
+  }
+
+  return found;
+}
+
 // Matches a top-level `## Delta — ...` heading line, capturing its date and
 // an optional `(N)` disambiguation suffix. `renderDeltaBlock`/`nextDeltaHeading`
 // always *generate* the canonical em dash (`—`) form, but *parsing* tolerates

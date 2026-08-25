@@ -51,6 +51,7 @@ export type { SystemLedger, SystemLedgerTask } from './templates/system-ledger.j
 export {
   updateSpec,
   findSpecById,
+  findAllSpecs,
   splitFrontmatter,
   todayIsoDate,
   SpecNotFoundError,
@@ -92,3 +93,6 @@ export type { VerifyResult } from './verify.js';
 
 export { checkDoneClaims } from './done-claim.js';
 export type { DoneClaimResult, DoneClaimViolation } from './done-claim.js';
+
+export { computeStatus } from './status.js';
+export type { StatusResult, SpecStatusEntry, TaskStatus, TaskDisplayState } from './status.js';

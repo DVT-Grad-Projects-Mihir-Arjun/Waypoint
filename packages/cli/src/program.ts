@@ -8,6 +8,7 @@ import { checkDriftCommand } from './commands/check-drift.js';
 import { gateCommand } from './commands/gate.js';
 import { verifyCommand } from './commands/verify.js';
 import { approveCommand } from './commands/approve.js';
+import { statusCommand } from './commands/status.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -107,6 +108,15 @@ export function createProgram(): Command {
     )
     .action(async (specId: string) => {
       await approveCommand(specId);
+    });
+
+  program
+    .command('status')
+    .description(
+      'Read-only report of every open spec across all three tiers, with approval/task-completion state and tier counts; a fully approved-and-done Feature/System spec is left off the list'
+    )
+    .action(async () => {
+      await statusCommand();
     });
 
   return program;

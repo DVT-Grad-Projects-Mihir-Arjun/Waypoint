@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installCommand } from './commands/install.js';
 import { newFeatureCommand } from './commands/new-feature.js';
 import { newPatchCommand } from './commands/new-patch.js';
+import { statusCommand } from './commands/status.js';
 
 // Direct proof of NFR1 (vendor neutrality): none of the CLI's
 // currently-existing commands may make an outbound network call to any AI
@@ -24,10 +25,17 @@ import { newPatchCommand } from './commands/new-patch.js';
 // responsible.
 //
 // Per the Never section of this story's spec, this test covers only
-// commands that exist today (`install`, `new-patch`, `new-feature`); it is
-// written to be trivially extended (add one more command call) as
-// `update`/`verify`/`approve`/`check-drift`/`status`/`gate` land in later
+// commands that exist today (`install`, `new-patch`, `new-feature`,
+// `status`); it is written to be trivially extended (add one more command
+// call) as `update`/`verify`/`approve`/`check-drift`/`gate` land in later
 // epics.
+//
+// `status` (Story 5.1) is included directly in this sequence, rather than
+// getting its own separate suite the way `gate.ts`/`verify.ts` do: those
+// legitimately shell out to git, so they need their own dedicated
+// network-surface test; `status` makes zero `child_process` calls at all
+// (pure filesystem reads), so it fits this existing read-only-ish sequence
+// unchanged.
 //
 // Each spy's implementation throws instead of forwarding to the real call.
 // This is a safety net, not the assertion itself: if the code under test
@@ -63,7 +71,7 @@ afterEach(() => {
 
 describe('vendor neutrality (NFR1)', () => {
   it(
-    'makes zero outbound network calls across install -> new-patch -> new-feature',
+    'makes zero outbound network calls across install -> new-patch -> new-feature -> status',
     async () => {
       const httpRequestSpy = vi.spyOn(http, 'request').mockImplementation(() => {
         throw new Error('unexpected call to http.request');
@@ -136,6 +144,15 @@ describe('vendor neutrality (NFR1)', () => {
 
         await newFeatureCommand('demo-feature', tmpDir);
         assertNoNetworkActivitySoFar('new-feature');
+
+        await statusCommand(tmpDir);
+        assertNoNetworkActivitySoFar('status');
+        // `status` in particular is pure filesystem reads -- unlike
+        // `gate`/`verify`/`approve`, it shells out to nothing at all, so
+        // this is a direct proof of that (not just "no network"), on top of
+        // the shared assertion above.
+        expect(execSpy, 'child_process.exec called during/after status').not.toHaveBeenCalled();
+        expect(spawnSpy, 'child_process.spawn called during/after status').not.toHaveBeenCalled();
       } finally {
         for (const spy of spies) {
           spy.mockRestore();
