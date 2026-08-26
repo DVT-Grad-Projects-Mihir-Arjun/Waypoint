@@ -22,11 +22,13 @@ See [`docs/brief.md`](docs/brief.md) for the full problem statement and [`docs/p
 
 | Tier        | For                                                     | Approval                                | Artifacts                                                                       |
 | ----------- | ------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
-| **Patch**   | A small, self-contained change with no design ambiguity | None                                    | `specs/patches/<id>.md`                                                         |
-| **Feature** | A change that adds behavior or needs upfront design     | One gate, granted once                  | `specs/features/<id>.md` + `tasks/<id>.ledger.yaml`                             |
-| **System**  | Work spanning multiple architecture-level decisions     | Phased — once per ledger phase boundary | `specs/systems/<id>/{prd.md,architecture.md,adr.md}` + `tasks/<id>.ledger.yaml` |
+| **Patch**   | A small, self-contained change with no design ambiguity | None                                    | `specs/patches/<name>.md`                                                       |
+| **Feature** | A change that adds behavior or needs upfront design     | One gate, granted once                  | `specs/features/<name>.md` + `tasks/<id>.ledger.yaml`                           |
+| **System**  | Work spanning multiple architecture-level decisions     | Phased — once per ledger phase boundary | `specs/systems/<name>/{prd.md,architecture.md,adr.md}` + `tasks/<id>.ledger.yaml` |
 
 When unsure, prefer the lowest tier that honestly captures the change's design ambiguity and blast radius — escalating a Patch to a Feature later is normal and cheap.
+
+`<name>` (what you pass to `new-patch`/`new-feature`/`new-system`) names the spec's file or directory as-is. `<id>` is the fuller `<tier>-<date>-<name>` string Waypoint stamps into the spec's own frontmatter and derives the ledger filename from — it's what `approve`/`update`/`verify`/`status` all take as their `<spec-id>` argument.
 
 **Specs are the source of truth, edited via deltas.** A Feature/System spec isn't rewritten wholesale as requirements evolve — `waypoint update` appends a dated `## Delta` block (`### ADDED` / `### MODIFIED` / `### REMOVED`) to the existing spec, and syncs any `### ADDED` bullets into new task-ledger rows. The spec's full history stays visible in one document.
 
@@ -64,14 +66,14 @@ This scaffolds `specs/{patches,features,systems}/`, `tasks/`, `decisions/`, `rol
 
 ```bash
 waypoint new-patch fix-typo-in-readme
-# edit specs/patches/patch-<date>-fix-typo-in-readme.md, then commit alongside your code change
+# edit specs/patches/fix-typo-in-readme.md (id in its frontmatter: patch-<date>-fix-typo-in-readme), then commit alongside your code change
 ```
 
 **A real feature** — one approval gate, a checked task ledger:
 
 ```bash
 waypoint new-feature auth-refresh
-# fill in specs/features/feat-<date>-auth-refresh.md and its task list
+# fill in specs/features/auth-refresh.md and its task list (id in its frontmatter: feat-<date>-auth-refresh)
 waypoint approve feat-<date>-auth-refresh          # human-only: grants the gate
 # implement t1, then:
 waypoint verify feat-<date>-auth-refresh t1        # runs check_command, marks t1 done+verified
