@@ -18,6 +18,9 @@ export async function installCommand(cwd: string = process.cwd()): Promise<void>
     for (const p of result.createdPaths) {
       console.log(`  created  ${p}`);
     }
+    for (const p of result.upgradedPaths) {
+      console.log(`  upgraded ${p} (was an old placeholder from an earlier install)`);
+    }
     for (const p of result.preservedPaths) {
       console.log(`  kept     ${p}`);
     }
