@@ -9,6 +9,7 @@ import { gateCommand } from './commands/gate.js';
 import { verifyCommand } from './commands/verify.js';
 import { approveCommand } from './commands/approve.js';
 import { statusCommand } from './commands/status.js';
+import { setupAgentCommand } from './commands/setup-agent.js';
 
 /**
  * Builds the `waypoint` CLI program. Factored out of `index.ts` so it can be
@@ -117,6 +118,16 @@ export function createProgram(): Command {
     )
     .action(async () => {
       await statusCommand();
+    });
+
+  program
+    .command('setup-agent <agent>')
+    .description(
+      'Generate native slash-command/skill files for a coding-agent tool, one per waypoint CLI verb (new-patch/new-feature/new-system/update/check-drift/gate/verify/status -- never approve, which stays human-only), so they show up directly in that tool\'s own command list. ' +
+        "<agent> is one of 'claude-code', 'antigravity', 'cursor', 'codex', or 'all'. Idempotent: an existing file is preserved, never overwritten. Requires waypoint install to have already run."
+    )
+    .action(async (agent: string) => {
+      await setupAgentCommand(agent);
     });
 
   return program;

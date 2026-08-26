@@ -67,6 +67,13 @@ of any action an agent takes (see Available Commands below).
   \`waypoint install\` does not configure CI enforcement automatically.
 - \`waypoint verify <spec-id> <task-id>\` — run a task's check command and,
   only on success, record it as done and verified in its ledger.
+- \`waypoint status\` — read-only report of every open spec, its approval
+  state, and task completion.
+- \`waypoint setup-agent <agent>\` — generate native slash-command/skill files
+  for a coding-agent tool (one of \`claude-code\`, \`antigravity\`, \`cursor\`,
+  \`codex\`, or \`all\`), one per command in this list except \`install\` and the
+  command gated behind human approval (see Tier Selection above), so they
+  show up directly in that tool's own command list.
 
 Note: this list intentionally does not include every action available in
 this repository's process — see Tier Selection above for the human-only
