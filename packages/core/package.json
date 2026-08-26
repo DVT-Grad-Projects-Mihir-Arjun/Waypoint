@@ -3,6 +3,14 @@
   "version": "1.0.0",
   "description": "Waypoint core: scaffolding, gate, drift, ledger, and delta logic shared by the CLI, git hook, and CI.",
   "license": "MIT",
+  "author": "Mihir Arjun",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DVT-Grad-Projects-Mihir-Arjun/Waypoint.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/DVT-Grad-Projects-Mihir-Arjun/Waypoint#readme",
+  "bugs": "https://github.com/DVT-Grad-Projects-Mihir-Arjun/Waypoint/issues",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -4,6 +4,13 @@
   "version": "1.0.0",
   "description": "Waypoint monorepo: packages/cli + packages/core",
   "license": "MIT",
+  "author": "Mihir Arjun",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DVT-Grad-Projects-Mihir-Arjun/Waypoint.git"
+  },
+  "homepage": "https://github.com/DVT-Grad-Projects-Mihir-Arjun/Waypoint#readme",
+  "bugs": "https://github.com/DVT-Grad-Projects-Mihir-Arjun/Waypoint/issues",
   "type": "module",
   "workspaces": [
     "packages/*"
