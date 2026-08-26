@@ -1,8 +1,9 @@
 {
   "name": "waypoint-monorepo",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Waypoint monorepo: packages/cli + packages/core",
+  "license": "MIT",
   "type": "module",
   "workspaces": [
     "packages/*"
