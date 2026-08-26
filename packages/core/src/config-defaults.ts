@@ -38,6 +38,23 @@ import { stringify } from 'yaml';
  * revisit criteria. `.waypoint/**` (which would also patch-classify
  * `.gate-state/**`) was deliberately narrowed to the literal
  * `.waypoint/config.yaml` to avoid widening that blast radius any further.
+ *
+ * `.claude/**` and `.agents/**` are patch-classified for the same bootstrap
+ * reason as `.gitignore`/`.waypoint/config.yaml`/`roles/**` above:
+ * `waypoint setup-agent <agent>` writes its generated slash-command/skill
+ * files to exactly these two locations (`.claude/skills/**` for Claude
+ * Code; `.agents/skills/**`, shared, for Cursor/Codex/Antigravity), and a
+ * user who runs `setup-agent` and then commits the result would otherwise
+ * be blocked by the very gate `install` already set up, with no spec delta
+ * possible for output that isn't itself a spec-governed code change — the
+ * identical bootstrapping problem `install`'s own scaffold output already
+ * solves for itself (epic-1-5 MVP retro, Finding 1).
+ *
+ * Accepted governance tradeoff, same shape as `roles/**` above: patch-
+ * classifying `.claude/**` and `.agents/**` means a *later* hand-edit to an
+ * already-generated skill file also goes unenforced, not just the first
+ * commit that creates it — nothing in this codebase protects these paths
+ * from an unenforced, undelta'd rewrite after the fact.
  */
 
 export interface WaypointConfig {
@@ -62,6 +79,8 @@ export const DEFAULT_PATCH_GLOBS: readonly string[] = [
   '.gitignore',
   '.waypoint/config.yaml',
   'roles/**',
+  '.claude/**',
+  '.agents/**',
 ];
 
 /** Builds the default config object written by `waypoint install`. */

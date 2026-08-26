@@ -96,3 +96,13 @@ export type { DoneClaimResult, DoneClaimViolation } from './done-claim.js';
 
 export { computeStatus } from './status.js';
 export type { StatusResult, SpecStatusEntry, TaskStatus, TaskDisplayState } from './status.js';
+
+export {
+  setupAgentCommands,
+  AGENT_TARGETS,
+  WaypointNotInstalledForSetupError,
+  InvalidAgentTargetError,
+} from './agent-setup.js';
+export type { AgentTarget, AgentSetupResult } from './agent-setup.js';
+export { AGENT_COMMAND_REGISTRY } from './agent-command-registry.js';
+export type { AgentCommandSpec, AgentCommandArg } from './agent-command-registry.js';

@@ -130,6 +130,8 @@ describe('scaffold — fresh install', () => {
       '.gitignore',
       '.waypoint/config.yaml',
       'roles/**',
+      '.claude/**',
+      '.agents/**',
     ]);
     expect(typeof parsed.check_command).toBe('string');
     expect(parsed.check_command.length).toBeGreaterThan(0);
