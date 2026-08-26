@@ -29,39 +29,39 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-20-2026 13:35
-last_updated: 08-25-2026 09:42
+last_updated: 08-26-2026 07:20
 project: Alt-Methodology
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: in-progress
-  1-1-install-scaffolds-the-repo-structure: review
-  1-2-patch-tier-spec-creation: review
-  1-3-feature-and-system-tier-spec-scaffolding: review
-  1-4-cross-platform-and-vendor-neutrality-verification: review
+  epic-1: done
+  1-1-install-scaffolds-the-repo-structure: done
+  1-2-patch-tier-spec-creation: done
+  1-3-feature-and-system-tier-spec-scaffolding: done
+  1-4-cross-platform-and-vendor-neutrality-verification: done
   epic-1-retrospective: done
 
-  epic-2: in-progress
-  2-1-update-spec-via-delta: review
-  2-2-check-drift-detects-stale-specs: review
+  epic-2: done
+  2-1-update-spec-via-delta: done
+  2-2-check-drift-detects-stale-specs: done
   epic-2-retrospective: done
 
-  epic-3: in-progress
-  3-1-tier-classification-via-config-driven-globs: review
-  3-2-pre-commit-gate-blocks-missing-spec-deltas: review
-  3-3-task-ledger-with-verify-only-completion: review
-  3-4-human-only-approval: review
-  3-5-ci-enforces-the-same-gate-plus-done-claim-correctness: review
+  epic-3: done
+  3-1-tier-classification-via-config-driven-globs: done
+  3-2-pre-commit-gate-blocks-missing-spec-deltas: done
+  3-3-task-ledger-with-verify-only-completion: done
+  3-4-human-only-approval: done
+  3-5-ci-enforces-the-same-gate-plus-done-claim-correctness: done
   epic-3-retrospective: done
 
-  epic-4: in-progress
-  4-1-agents-md-generation: review
-  4-2-role-prompts: review
+  epic-4: done
+  4-1-agents-md-generation: done
+  4-2-role-prompts: done
   epic-4-retrospective: done
 
-  epic-5: in-progress
-  5-1-waypoint-status: review
+  epic-5: done
+  5-1-waypoint-status: done
   epic-5-retrospective: done
 action_items:
   - id: "epic-1-retro-item-1-fix-the-fresh-install-first-commit-gate"
@@ -72,7 +72,7 @@ action_items:
       commit passes the gate it just installed. Add a standing regression test running
       the real scaffold() output through the real gate/hook."
     owner: "next available implementation session"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
   - id: "epic-2-retro-item-2-extend-verify-ts-s-per-spec-lock-acquire"
     epic: 2
@@ -81,7 +81,7 @@ action_items:
       ledger-corruption race with waypoint verify or a second waypoint update on the
       same spec."
     owner: "next available implementation session"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
   - id: "epic-3-retro-item-3-fix-the-waypoint-update-phase-1-approval"
     epic: 3
@@ -91,7 +91,7 @@ action_items:
       integration test chaining new-system -> approve (all phases) -> update -> approve,
       asserting the third approve call does not report already-approved."
     owner: "next available implementation session"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
   - id: "epic-3-retro-item-4-add-the-same-null-non-object-ledger-row"
     epic: 3
@@ -99,7 +99,7 @@ action_items:
       to verify.ts's tasks.find calls, update-spec.ts's ledger.tasks traversals, and
       approve.ts's readLedgerDistinctPhases."
     owner: "next available implementation session"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
   - id: "epic-3-retro-item-5-add-an-explicit-timeout-matching-the-300"
     epic: 3
@@ -108,7 +108,7 @@ action_items:
       critical section, since a hang there currently blocks every future verify call
       on that spec indefinitely."
     owner: "next available implementation session"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
   - id: "epic-3-retro-item-6-apply-spec_id_shape_pattern-uniformly-ac"
     epic: 3
@@ -117,7 +117,7 @@ action_items:
       contract mismatch where a malformed-id Feature spec can approve successfully
       then fail update for the identical id."
     owner: "next available implementation session"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
   - id: "epic-4-retro-item-7-widen-deferred-work-md-s-existing-packag"
     epic: 4
@@ -126,7 +126,7 @@ action_items:
       core/delta/, and scripts/gate.sh references in docs/architecture.md, beyond
       the agents-md.template line it already scopes."
     owner: "whoever next touches that deferred-work entry"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
   - id: "epic-5-retro-item-8-add-at-least-one-true-integration-test-c"
     epic: 5
@@ -136,7 +136,7 @@ action_items:
       missing from the whole test suite, and the systemic gap that let the phase-1
       approval-bypass defect ship undetected."
     owner: "next available implementation session"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
   - id: "epic-5-retro-item-9-fix-docs-architecture-md-s-stale-closing"
     epic: 5
@@ -144,5 +144,5 @@ action_items:
       predates Story 5.1's real closing criterion) and its 6 bare 'npx waypoint gate
       --ci' examples missing the mandatory --base <ref> flag Story 3.5 requires."
     owner: "next available implementation session or a docs-only patch"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-5-mvp-retro-2026-08-25.md"
