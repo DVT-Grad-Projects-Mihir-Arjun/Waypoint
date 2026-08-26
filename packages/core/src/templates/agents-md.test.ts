@@ -29,6 +29,8 @@ describe('renderAgentsMd', () => {
       'check-drift',
       'gate',
       'verify',
+      'status',
+      'setup-agent',
     ]) {
       expect(content).toContain(command);
     }

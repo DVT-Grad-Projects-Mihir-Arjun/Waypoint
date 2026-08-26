@@ -38,6 +38,8 @@ When unsure, prefer the lowest tier that honestly captures the change's design a
 
 **Approval is deliberately human-only.** `waypoint approve` is the sole mechanism that moves a spec from `draft` toward `approved` (Feature tier: once; System tier: once per phase boundary). It's excluded from `AGENTS.md`'s list of agent-facing commands by convention — not because the CLI blocks agent invocation, but because the whole point of the gate is a human decision in the loop.
 
+**Commands can show up natively in your agent's own UI.** `waypoint install` alone makes every workflow verb discoverable via `AGENTS.md` — an agent has to be told to go read it. `waypoint setup-agent <agent>` goes a step further: it generates that agent's own native command/skill files (e.g. `.claude/skills/waypoint-verify/SKILL.md` for Claude Code), one per verb except `install` and the human-only approval gate, so they appear directly in that tool's command list. Supports `claude-code`, `antigravity`, `cursor`, and `codex` (or `all` for every one at once) — idempotent, and never overwrites a file you've since customized. Requires `waypoint install` to have already run. Same as `install`, commit the result yourself — `setup-agent` never commits anything on its own, and its generated files (`.claude/**`, `.agents/**`) are patch-classified by default specifically so committing them isn't blocked by the gate.
+
 ## Installation
 
 Waypoint isn't published to a package registry yet. To use it today, build it from source and link the CLI locally:
@@ -107,6 +109,7 @@ waypoint check-drift
 | `waypoint check-drift`                | Flag spec references to files/symbols that no longer resolve                             |
 | `waypoint status`                     | Read-only report of every open spec, its approval state, and task completion             |
 | `waypoint gate [--ci --base <ref>]`   | The enforcement check itself — runs as a git hook by default, or in full-PR-diff CI mode |
+| `waypoint setup-agent <agent \| all>` | Generate native slash-command/skill files for a coding-agent tool (`claude-code`, `antigravity`, `cursor`, `codex`, or `all`) |
 
 Run `waypoint <command> --help` for a command's full description.
 
